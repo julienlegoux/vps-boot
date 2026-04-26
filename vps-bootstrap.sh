@@ -124,14 +124,13 @@ apt-get install -y gh
 # nvm, Node LTS, Bun, Claude Code
 log "Installing user toolchain for '$USERNAME'…"
 sudo -u "$USERNAME" -H bash <<EOF
-set -euo pipefail
+set -eo pipefail   # nvm.sh uses unset vars internally; can't use -u here
 
 # nvm + Node LTS
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh | bash
 export NVM_DIR="\$HOME/.nvm"
 . "\$NVM_DIR/nvm.sh"
-nvm install --lts
-nvm use --lts
+nvm install --lts   # auto-activates, no need for 'nvm use'
 
 # Bun
 curl -fsSL https://bun.sh/install | bash
