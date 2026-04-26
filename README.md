@@ -24,7 +24,7 @@ Single-script bootstrap for a fresh Ubuntu LTS VPS.
 Two args: `username` (required), `ssh_port` (optional, defaults to `1986`).
 
 ```bash
-curl -fsSL https://github.com/julienlegoux/vps-boot/blob/4ec328f74832b9b67f7007be785c102c16fe993e/vps-bootstrap.sh -o bootstrap.sh
+curl -fsSL https://github.com/julienlegoux/vps-boot/main/vps-bootstrap.sh -o bootstrap.sh
 sudo bash bootstrap.sh <username> <port>
 ```
 
