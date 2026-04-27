@@ -13,7 +13,6 @@ set -euo pipefail
 # Constants
 # ════════════════════════════════════════════════════════════════════════════
 
-readonly TIMEZONE="Europe/Paris"
 readonly NVM_VERSION="v0.40.4"
 readonly PORT_MIN=10000
 readonly PORT_MAX=65535
@@ -546,10 +545,6 @@ bl_update() {
     software-properties-common ufw fail2ban git unzip curl
 }
 
-bl_timezone() {
-  timedatectl set-timezone "$TIMEZONE"
-}
-
 bl_user() {
   # non-interactive: useradd + chpasswd. password is in $USER_PASSWORD env.
   useradd -m -s /bin/bash -c "" "$USERNAME"
@@ -778,7 +773,6 @@ cmd_install() {
     done
     body "${C_BOLD}install${C_RESET}   $list"
   fi
-  body "${C_BOLD}timezone${C_RESET}  $TIMEZONE"
   rail
 
   local go
@@ -798,7 +792,6 @@ cmd_install() {
   export DEBIAN_FRONTEND=noninteractive
 
   step_run "System update"               bl_update
-  step_run "Timezone → $TIMEZONE"        bl_timezone
   step_run "User $USERNAME"              bl_user
   step_run "Firewall (UFW)"              bl_ufw
   step_run "SSH hardening"               bl_ssh_harden
@@ -868,15 +861,6 @@ do_check() {
     ok "$USERNAME in sudo group"
   else
     ko "$USERNAME not in sudo group"
-  fi
-
-  # ── timezone ──
-  local tz
-  tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
-  if [[ "$tz" == "$TIMEZONE" ]]; then
-    ok "timezone = $tz"
-  else
-    note "timezone = '$tz' (expected $TIMEZONE)"
   fi
 
   # ── ssh ──

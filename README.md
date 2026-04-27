@@ -20,7 +20,6 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot
 | Step              | Notes                                                            |
 |-------------------|------------------------------------------------------------------|
 | System update     | `apt update && upgrade` + base packages                          |
-| Timezone          | `Europe/Paris` (hardcoded — change at the top of the script)     |
 | User              | non-root, `sudo` group, password set non-interactively in wizard |
 | Firewall (UFW)    | deny incoming · allow `<your-port>`/80/443 · default deny `:22`  |
 | SSH hardening     | custom port, root login off, `sshd_config` backed up first       |
