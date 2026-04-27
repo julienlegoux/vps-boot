@@ -78,13 +78,3 @@ That's it. The wizard's Custom multi-select picks it up automatically. `cmd_chec
 Colors: orange section titles · dim hints and rails · green ✓ · red ✗ · yellow ! · cyan accents (cursor, hyperlinks, key paths).
 
 The ASCII banner (block letters spelling `VPS-BOOT`) is hardcoded as a heredoc inside `banner()`. To rebrand, replace the heredoc — no runtime `figlet` dependency.
-
-## Testing
-
-- **Syntax**: `bash -n vps-boot.sh` — must pass before commit.
-- **Lint**: `shellcheck vps-boot.sh` if installed — target zero warnings.
-- **E2E install**: spin up a fresh Ubuntu LTS in Docker (`docker run --rm -it --privileged ubuntu:24.04 bash`, then `apt update && apt install -y curl sudo systemctl`) or Multipass (`multipass launch --name vps-test 24.04`). Push the script in, run `bash vps-boot.sh install`. Confirm the auto-check at the end shows all ✓.
-- **E2E QuickStart vs Custom**: run twice. In Custom, deselect a component (e.g. Bun) and confirm the final check correctly reports `bun not installed` and the rest as ✓.
-- **Standalone check**: `sudo ./vps-boot.sh check <user> <port>` produces the same Verify section without the install context above it.
-- **curl pipe**: `curl -fsSL <raw-url> | sudo bash -s install` — confirm `/dev/tty` reads work (prompts visible, input echoed for non-secret fields, masked for password).
-- **Never test on a VPS you care about.** SSH lockouts are recoverable via the provider's web console (the script backs up `sshd_config` to `sshd_config.bak.<timestamp>`) but it's still a chore.

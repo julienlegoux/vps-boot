@@ -969,8 +969,7 @@ do_check() {
   [[ -z "$vps_ip" ]] && vps_ip="<vps-ip>"
 
   body ""
-  body "${C_BOLD}Reconnect:${C_RESET}  ssh -p $SSH_PORT $USERNAME@$vps_ip"
-  body "${C_BOLD}Re-verify:${C_RESET}  sudo $0 check $USERNAME $SSH_PORT"
+  body "${C_BOLD}Connect:${C_RESET}  ssh -p $SSH_PORT $USERNAME@$vps_ip"
   body "${C_DIM}Note: docker group membership requires a fresh login.${C_RESET}"
   printf '\n'
 
