@@ -961,6 +961,21 @@ do_check() {
 
   body ""
   body "${C_BOLD}Connect:${C_RESET}  ssh -p $SSH_PORT $USERNAME@$vps_ip"
+
+  # ── post-install sign-in hints (component-owned, optional) ──
+  local -a hints=()
+  local k
+  for k in "${ENABLED_COMPONENTS[@]}"; do
+    [[ -n "${COMPONENT_SIGNIN[$k]:-}" ]] && hints+=("${COMPONENT_SIGNIN[$k]}")
+  done
+  if (( ${#hints[@]} > 0 )); then
+    body "${C_BOLD}Sign in:${C_RESET}  ${hints[0]}"
+    local i
+    for ((i=1; i<${#hints[@]}; i++)); do
+      body "          ${hints[i]}"
+    done
+  fi
+
   body "${C_DIM}Note: docker group membership requires a fresh login.${C_RESET}"
   printf '\n'
 
