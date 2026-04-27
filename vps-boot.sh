@@ -375,10 +375,14 @@ declare -A COMPONENT_DEFAULT=()
 declare -A COMPONENT_SCOPE=()   # "system" or "user"
 declare -A COMPONENT_INSTALL=()
 declare -A COMPONENT_CHECK=()
+declare -A COMPONENT_SIGNIN=()  # optional: short hint shown in do_check footer
 
-# register <key> <name> <desc> <default 0|1> <scope system|user> <install_fn> <check_fn>
+# register <key> <name> <desc> <default 0|1> <scope system|user> <install_fn> <check_fn> [signin_hint]
+# signin_hint is an optional one-line string shown under "Sign in:" in the do_check footer.
+# Leave empty for components that need no post-install authentication.
 register() {
   local key=$1 name=$2 desc=$3 default=$4 scope=$5 install_fn=$6 check_fn=$7
+  local signin_hint=${8:-}
   COMPONENTS+=("$key")
   COMPONENT_NAME[$key]=$name
   COMPONENT_DESC[$key]=$desc
@@ -386,6 +390,7 @@ register() {
   COMPONENT_SCOPE[$key]=$scope
   COMPONENT_INSTALL[$key]=$install_fn
   COMPONENT_CHECK[$key]=$check_fn
+  COMPONENT_SIGNIN[$key]=$signin_hint
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -453,7 +458,8 @@ check_gh() {
   fi
 }
 
-register gh "GitHub CLI" "gh" 1 system install_gh check_gh
+register gh "GitHub CLI" "gh" 1 system install_gh check_gh \
+  "gh auth login            (paste the one-time code in your browser)"
 
 # ─── node ──────────────────────────────────────────────────
 install_node() {
@@ -531,7 +537,8 @@ check_claude() {
   fi
 }
 
-register claude "Claude Code" "Anthropic's CLI" 1 user install_claude check_claude
+register claude "Claude Code" "Anthropic's CLI" 1 user install_claude check_claude \
+  "claude                   (first run opens the OAuth browser flow)"
 
 # ════════════════════════════════════════════════════════════════════════════
 # Baseline (mandatory, ordered) — NOT registered, always run
