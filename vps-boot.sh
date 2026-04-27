@@ -137,11 +137,14 @@ warn() {
   printf '%s! %s%s\n' "$C_YELLOW" "$1" "$C_RESET" >&2
 }
 
-# prompt_text "label" "default" -> echoes the entered value
-# Reads from /dev/tty so it works under `curl | sudo bash`.
+# prompt_text "label" out_var ["default"]
+# Reads from /dev/tty so it works under `curl | sudo bash`. Writes the
+# entered value to the named variable — do NOT call via $(...) because the
+# UI rendering goes to stdout and would be captured.
 prompt_text() {
   local label=$1
-  local default=${2:-}
+  local out_var=$2
+  local default=${3:-}
   local input
 
   printf '\n%s◇%s  %s%s%s\n' "$C_ORANGE" "$C_RESET" "$C_BOLD" "$label" "$C_RESET"
@@ -154,12 +157,14 @@ prompt_text() {
     IFS= read -r input < /dev/tty
   fi
 
-  printf '%s' "${input:-$default}"
+  printf -v "$out_var" '%s' "${input:-$default}"
 }
 
-# prompt_password "label" -> echoes the password (no terminal echo while typing)
+# prompt_password "label" out_var
+# Writes the password to the named variable. Do NOT call via $(...).
 prompt_password() {
   local label=$1
+  local out_var=$2
   local pw1 pw2
 
   while :; do
@@ -182,7 +187,7 @@ prompt_password() {
     break
   done
 
-  printf '%s' "$pw1"
+  printf -v "$out_var" '%s' "$pw1"
 }
 
 # prompt_radio "label" out_var "option1|desc1" "option2|desc2" ...
@@ -697,7 +702,7 @@ cmd_install() {
 
   # ── username ──
   while :; do
-    USERNAME=$(prompt_text "Username" "$arg_user")
+    prompt_text "Username" USERNAME "$arg_user"
     if ! valid_username "$USERNAME"; then
       printf '%s│%s  %s! invalid username — must match [a-z_][a-z0-9_-]{0,31}%s\n' \
         "$C_DIM" "$C_RESET" "$C_YELLOW" "$C_RESET"
@@ -716,7 +721,7 @@ cmd_install() {
   # ── port ──
   local port_default=${arg_port:-$(random_port)}
   while :; do
-    SSH_PORT=$(prompt_text "SSH port" "$port_default")
+    prompt_text "SSH port" SSH_PORT "$port_default"
     if ! valid_port "$SSH_PORT"; then
       printf '%s│%s  %s! invalid port — must be 1-65535%s\n' \
         "$C_DIM" "$C_RESET" "$C_YELLOW" "$C_RESET"
@@ -731,7 +736,7 @@ cmd_install() {
   done
 
   # ── password ──
-  USER_PASSWORD=$(prompt_password "Password for $USERNAME")
+  prompt_password "Password for $USERNAME" USER_PASSWORD
 
   # ── install mode ──
   local mode
