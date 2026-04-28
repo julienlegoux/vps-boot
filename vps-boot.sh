@@ -13,7 +13,6 @@ set -euo pipefail
 # Constants
 # ════════════════════════════════════════════════════════════════════════════
 
-readonly NVM_VERSION="v0.40.4"
 readonly PORT_MIN=10000
 readonly PORT_MAX=65535
 readonly LOG_FILE="/tmp/vps-boot.log"
@@ -464,81 +463,59 @@ register gh "GitHub CLI" "gh" 1 system install_gh check_gh \
 
 # ─── node ──────────────────────────────────────────────────
 install_node() {
-  sudo -u "$USERNAME" -H bash <<EOF
-set -eo pipefail
-curl -fsSL -o- https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh | bash
-export NVM_DIR="\$HOME/.nvm"
-. "\$NVM_DIR/nvm.sh"
-nvm install --lts
-EOF
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+  chmod a+r /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_lts.x nodistro main" \
+    > /etc/apt/sources.list.d/nodesource.list
+  apt update -y
+  apt install -y nodejs
 }
 
 check_node() {
-  local home
-  home=$(getent passwd "$USERNAME" | cut -d: -f6)
-  if [[ -d "$home/.nvm" ]]; then
+  if command -v node >/dev/null 2>&1; then
     local v
-    v=$(sudo -u "$USERNAME" -H bash -c '
-      export NVM_DIR=$HOME/.nvm
-      [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null
-      command -v node >/dev/null && node --version
-    ' 2>/dev/null)
-    if [[ -n "$v" ]]; then
-      ok "node $v (via nvm $NVM_VERSION)"
-    else
-      ko "node not available (nvm installed but node missing)"
-    fi
+    v=$(node --version 2>/dev/null || echo "?")
+    ok "node $v"
   else
-    ko "nvm not installed"
+    ko "node not installed"
   fi
 }
 
-register node "Node LTS (via nvm)" "nvm + node LTS" 1 user install_node check_node
+register node "Node LTS" "current LTS via NodeSource" 1 system install_node check_node
 
 # ─── bun ───────────────────────────────────────────────────
 install_bun() {
-  sudo -u "$USERNAME" -H bash -c 'curl -fsSL https://bun.sh/install | bash'
+  npm install -g bun
 }
 
 check_bun() {
-  local home
-  home=$(getent passwd "$USERNAME" | cut -d: -f6)
-  local v
-  v=$(sudo -u "$USERNAME" -H bash -c '"$HOME/.bun/bin/bun" --version 2>/dev/null' 2>/dev/null || true)
-  if [[ -n "$v" ]]; then
+  if command -v bun >/dev/null 2>&1; then
+    local v
+    v=$(bun --version 2>/dev/null || echo "?")
     ok "bun $v"
   else
     ko "bun not installed"
   fi
 }
 
-register bun "Bun" "JS runtime" 1 user install_bun check_bun
+register bun "Bun" "JS runtime" 1 system install_bun check_bun
 
 # ─── claude code ───────────────────────────────────────────
 install_claude() {
-  sudo -u "$USERNAME" -H bash <<'EOF'
-set -eo pipefail
-export NVM_DIR="$HOME/.nvm"
-. "$NVM_DIR/nvm.sh"
-npm install -g @anthropic-ai/claude-code
-EOF
+  npm install -g @anthropic-ai/claude-code
 }
 
 check_claude() {
-  local v
-  v=$(sudo -u "$USERNAME" -H bash -c '
-    export NVM_DIR=$HOME/.nvm
-    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null
-    command -v claude >/dev/null && echo yes
-  ' 2>/dev/null || true)
-  if [[ "$v" == "yes" ]]; then
+  if command -v claude >/dev/null 2>&1; then
     ok "claude code installed"
   else
     ko "claude code not installed"
   fi
 }
 
-register claude "Claude Code" "Anthropic's CLI" 1 user install_claude check_claude \
+register claude "Claude Code" "Anthropic's CLI" 1 system install_claude check_claude \
   "claude                   (first run opens the OAuth browser flow)"
 
 # ════════════════════════════════════════════════════════════════════════════

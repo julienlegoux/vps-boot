@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(bash -n vps-boot.sh)"
+      "Bash(bash -n vps-boot.sh)",
+      "Bash(bash -n D:/Project/vps-boot/vps-boot.sh)"
     ]
   }
 }
