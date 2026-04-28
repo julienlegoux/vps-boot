@@ -553,26 +553,39 @@ set_sshd() {
 bl_ssh_harden() {
   local cfg=/etc/ssh/sshd_config
   cp "$cfg" "${cfg}.bak.$(date +%s)"
+
+  set_sshd Port                   "$SSH_PORT"
   set_sshd PermitRootLogin        "no"
   set_sshd PasswordAuthentication "yes"   # flipped to no after key enrollment
 
-  # Ubuntu 22.10+: ssh.socket owns the listener — override its ListenStream via a drop-in.
-  install -d -m 0755 /etc/systemd/system/ssh.socket.d
-  cat > /etc/systemd/system/ssh.socket.d/listen.conf <<EOF
-[Socket]
-ListenStream=
-ListenStream=$SSH_PORT
-EOF
+  # Make ssh.service the canonical listener. Mask ssh.socket so it can't
+  # auto-bind :22 on reboot or after an openssh-server upgrade.
+  systemctl disable --now ssh.socket 2>/dev/null || true
+  systemctl mask        ssh.socket 2>/dev/null || true
+  rm -f /etc/systemd/system/ssh.socket.d/listen.conf
+  rmdir /etc/systemd/system/ssh.socket.d 2>/dev/null || true
 
-  # Migration: undo state left by earlier versions that masked ssh.socket / enabled ssh.service.
-  systemctl unmask ssh.socket 2>/dev/null || true
-  systemctl enable ssh.socket 2>/dev/null || true
-  systemctl stop    ssh.service 2>/dev/null || true
-  systemctl disable ssh.service 2>/dev/null || true
-
+  systemctl unmask ssh.service 2>/dev/null || true
+  systemctl enable ssh.service 2>/dev/null || true
   systemctl daemon-reload
+
   sshd -t
-  systemctl restart ssh.socket
+  systemctl restart ssh.service
+
+  # Confirm the kernel actually bound the new port. systemctl restart can
+  # return success without the listener coming up cleanly in edge cases.
+  local i
+  for ((i=0; i<5; i++)); do
+    if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${SSH_PORT}\$"; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "ERROR: ssh.service did not bind to port $SSH_PORT" >&2
+  ss -tlnH 2>&1 || true
+  systemctl status ssh.service --no-pager -l 2>&1 || true
+  journalctl -u ssh.service --no-pager -n 30 2>&1 || true
+  return 1
 }
 
 bl_fail2ban() {
@@ -669,16 +682,6 @@ random_port() {
 
 cmd_install() {
   [[ $EUID -eq 0 ]] || die "Must run as root."
-
-  # Re-exec in a transient systemd scope so the install survives the SSH session dying when ssh.socket cycles.
-  if [[ "${VPS_BOOT_DETACHED:-}" != "1" ]] \
-     && [[ -f "${BASH_SOURCE[0]}" ]] \
-     && command -v systemd-run >/dev/null 2>&1; then
-    exec env VPS_BOOT_DETACHED=1 systemd-run \
-      --scope --collect --quiet --pty \
-      --unit="vps-boot-install-$$" \
-      -- bash "${BASH_SOURCE[0]}" install "$@"
-  fi
 
   local arg_user=${1:-}
   local arg_port=${2:-}
@@ -875,12 +878,15 @@ do_check() {
   else
     ko "PermitRootLogin not 'no'"
   fi
-  if systemctl is-active --quiet ssh.socket 2>/dev/null \
-     && systemctl show ssh.socket -p Listen --value 2>/dev/null \
-          | grep -qE "Stream\s+(\[::\]:|0\.0\.0\.0:|)${SSH_PORT}( |\$)"; then
-    ok "ssh.socket listening on $SSH_PORT"
+  if systemctl is-active --quiet ssh.socket 2>/dev/null; then
+    ko "ssh.socket should be masked but is active"
   else
-    ko "ssh.socket not listening on $SSH_PORT"
+    ok "ssh.socket masked/inactive"
+  fi
+  if systemctl is-active --quiet ssh.service 2>/dev/null; then
+    ok "ssh.service active"
+  else
+    ko "ssh.service not active"
   fi
   if sshd -t 2>/dev/null; then
     ok "sshd config valid"
@@ -911,14 +917,11 @@ do_check() {
   else
     ko "UFW inactive"
   fi
-  local p
-  for p in "$SSH_PORT" 80 443; do
-    if ufw status 2>/dev/null | grep -qE "^${p}/tcp[[:space:]]+ALLOW"; then
-      ok "$p/tcp allowed"
-    else
-      ko "$p/tcp not allowed"
-    fi
-  done
+  if ufw status 2>/dev/null | grep -qE "^${SSH_PORT}/tcp[[:space:]]+ALLOW"; then
+    ok "$SSH_PORT/tcp allowed"
+  else
+    ko "$SSH_PORT/tcp not allowed"
+  fi
 
   # ── fail2ban ──
   if systemctl is-active --quiet fail2ban; then
