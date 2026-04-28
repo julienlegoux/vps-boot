@@ -7,11 +7,11 @@ Single-file bash bootstrap for fresh Ubuntu LTS VPSes. `vps-boot.sh install` run
 `vps-boot.sh` is read top to bottom:
 
 1. **Header & `set -euo pipefail`**
-2. **Constants** — `TIMEZONE`, `NVM_VERSION`, port range, log path, ANSI colors
+2. **Constants** — `NVM_VERSION`, port range, log path, ANSI colors
 3. **UI library** — `banner`, `section`, `rail`, `body`, `done_section`, `step_run`, `ok` / `ko` / `note`, `die`, `warn`, `prompt_text`, `prompt_password`, `prompt_radio`, `prompt_multiselect`. All reads go through `< /dev/tty` so `curl | sudo bash` works.
-4. **Component registry** — `register()` + parallel associative arrays (`COMPONENT_NAME`, `COMPONENT_DESC`, `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_INSTALL`, `COMPONENT_CHECK`)
+4. **Component registry** — `register()` + parallel associative arrays (`COMPONENT_NAME`, `COMPONENT_DESC`, `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_INSTALL`, `COMPONENT_CHECK`, `COMPONENT_SIGNIN`)
 5. **Components** — one block per tool (`install_xxx`, `check_xxx`, `register xxx …`). Order = run order.
-6. **Baseline** — `bl_update`, `bl_timezone`, `bl_user`, `bl_ufw`, `bl_ssh_harden`, `bl_fail2ban`. Mandatory, NOT registered, always run in this order. Plus the `set_sshd` helper.
+6. **Baseline** — `bl_update`, `bl_user`, `bl_ufw`, `bl_ssh_harden`, `bl_fail2ban`. Mandatory, NOT registered, always run in this order. Plus the `set_sshd` helper.
 7. **SSH key enrollment** — `enroll_ssh_key`
 8. **Validation** — `valid_username`, `valid_port`, `random_port`
 9. **Flows** — `cmd_install`, `cmd_check`, `do_check`, `cmd_help`
@@ -41,6 +41,10 @@ register btop "btop" "process viewer" 1 system install_btop check_btop
 #        ^id  ^name  ^short-desc      ^default-on (1=yes)
 #                                       ^scope (system|user)
 #                                                ^install fn  ^check fn
+
+# Optional 8th arg: a short sign-in hint shown in the do_check footer
+# (only set this for components that need post-install auth, e.g. gh/claude):
+#   register btop "btop" "process viewer" 1 system install_btop check_btop "btop login (opens browser)"
 ```
 
 That's it. The wizard's Custom multi-select picks it up automatically. `cmd_check` runs `check_btop` automatically. No other plumbing.

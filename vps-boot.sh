@@ -13,8 +13,6 @@ set -euo pipefail
 # Constants
 # ════════════════════════════════════════════════════════════════════════════
 
-readonly TIMEZONE="Europe/Paris"
-readonly NVM_VERSION="v0.40.4"
 readonly PORT_MIN=10000
 readonly PORT_MAX=65535
 readonly LOG_FILE="/tmp/vps-boot.log"
@@ -145,16 +143,17 @@ prompt_text() {
   local label=$1
   local out_var=$2
   local default=${3:-}
-  local input
+  local input prompt_str
 
   printf '\n%s◇%s  %s%s%s\n' "$C_ORANGE" "$C_RESET" "$C_BOLD" "$label" "$C_RESET"
-  printf '%s│%s  %s›%s ' "$C_DIM" "$C_RESET" "$C_CYAN" "$C_RESET"
+  # \001…\002 mark colour codes zero-width so readline's edge-stop respects the prompt.
+  prompt_str=$(printf '\001%s\002│\001%s\002  \001%s\002›\001%s\002 ' \
+    "$C_DIM" "$C_RESET" "$C_CYAN" "$C_RESET")
 
   if [[ -n "$default" ]]; then
-    # use readline to pre-fill an editable default
-    IFS= read -r -e -i "$default" input < /dev/tty
+    IFS= read -r -e -i "$default" -p "$prompt_str" input < /dev/tty
   else
-    IFS= read -r input < /dev/tty
+    IFS= read -r -e -p "$prompt_str" input < /dev/tty
   fi
 
   printf -v "$out_var" '%s' "${input:-$default}"
@@ -376,10 +375,14 @@ declare -A COMPONENT_DEFAULT=()
 declare -A COMPONENT_SCOPE=()   # "system" or "user"
 declare -A COMPONENT_INSTALL=()
 declare -A COMPONENT_CHECK=()
+declare -A COMPONENT_SIGNIN=()  # optional: short hint shown in do_check footer
 
-# register <key> <name> <desc> <default 0|1> <scope system|user> <install_fn> <check_fn>
+# register <key> <name> <desc> <default 0|1> <scope system|user> <install_fn> <check_fn> [signin_hint]
+# signin_hint is an optional one-line string shown under "Sign in:" in the do_check footer.
+# Leave empty for components that need no post-install authentication.
 register() {
   local key=$1 name=$2 desc=$3 default=$4 scope=$5 install_fn=$6 check_fn=$7
+  local signin_hint=${8:-}
   COMPONENTS+=("$key")
   COMPONENT_NAME[$key]=$name
   COMPONENT_DESC[$key]=$desc
@@ -387,6 +390,7 @@ register() {
   COMPONENT_SCOPE[$key]=$scope
   COMPONENT_INSTALL[$key]=$install_fn
   COMPONENT_CHECK[$key]=$check_fn
+  COMPONENT_SIGNIN[$key]=$signin_hint
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -454,85 +458,59 @@ check_gh() {
   fi
 }
 
-register gh "GitHub CLI" "gh" 1 system install_gh check_gh
+register gh "GitHub CLI" "gh" 1 system install_gh check_gh \
+  "gh auth login            (paste the one-time code in your browser)"
 
 # ─── node ──────────────────────────────────────────────────
 install_node() {
-  sudo -u "$USERNAME" -H bash <<EOF
-set -eo pipefail
-curl -fsSL -o- https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh | bash
-export NVM_DIR="\$HOME/.nvm"
-. "\$NVM_DIR/nvm.sh"
-nvm install --lts
-EOF
+  curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+  apt install -y nodejs
 }
 
 check_node() {
-  local home
-  home=$(getent passwd "$USERNAME" | cut -d: -f6)
-  if [[ -d "$home/.nvm" ]]; then
+  if command -v node >/dev/null 2>&1; then
     local v
-    v=$(sudo -u "$USERNAME" -H bash -c '
-      export NVM_DIR=$HOME/.nvm
-      [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null
-      command -v node >/dev/null && node --version
-    ' 2>/dev/null)
-    if [[ -n "$v" ]]; then
-      ok "node $v (via nvm $NVM_VERSION)"
-    else
-      ko "node not available (nvm installed but node missing)"
-    fi
+    v=$(node --version 2>/dev/null || echo "?")
+    ok "node $v"
   else
-    ko "nvm not installed"
+    ko "node not installed"
   fi
 }
 
-register node "Node LTS (via nvm)" "nvm + node LTS" 1 user install_node check_node
+register node "Node LTS" "current LTS via NodeSource" 1 system install_node check_node
 
 # ─── bun ───────────────────────────────────────────────────
 install_bun() {
-  sudo -u "$USERNAME" -H bash -c 'curl -fsSL https://bun.sh/install | bash'
+  npm install -g bun
 }
 
 check_bun() {
-  local home
-  home=$(getent passwd "$USERNAME" | cut -d: -f6)
-  local v
-  v=$(sudo -u "$USERNAME" -H bash -c '"$HOME/.bun/bin/bun" --version 2>/dev/null' 2>/dev/null || true)
-  if [[ -n "$v" ]]; then
+  if command -v bun >/dev/null 2>&1; then
+    local v
+    v=$(bun --version 2>/dev/null || echo "?")
     ok "bun $v"
   else
     ko "bun not installed"
   fi
 }
 
-register bun "Bun" "JS runtime" 1 user install_bun check_bun
+register bun "Bun" "JS runtime" 1 system install_bun check_bun
 
 # ─── claude code ───────────────────────────────────────────
 install_claude() {
-  sudo -u "$USERNAME" -H bash <<'EOF'
-set -eo pipefail
-export NVM_DIR="$HOME/.nvm"
-. "$NVM_DIR/nvm.sh"
-npm install -g @anthropic-ai/claude-code
-EOF
+  npm install -g @anthropic-ai/claude-code
 }
 
 check_claude() {
-  local v
-  v=$(sudo -u "$USERNAME" -H bash -c '
-    export NVM_DIR=$HOME/.nvm
-    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null
-    command -v claude >/dev/null && echo yes
-  ' 2>/dev/null || true)
-  if [[ "$v" == "yes" ]]; then
+  if command -v claude >/dev/null 2>&1; then
     ok "claude code installed"
   else
     ko "claude code not installed"
   fi
 }
 
-register claude "Claude Code" "Anthropic's CLI" 1 user install_claude check_claude
+register claude "Claude Code" "Anthropic's CLI" 1 system install_claude check_claude \
+  "claude                   (first run opens the OAuth browser flow)"
 
 # ════════════════════════════════════════════════════════════════════════════
 # Baseline (mandatory, ordered) — NOT registered, always run
@@ -544,10 +522,6 @@ bl_update() {
   apt-get install -y \
     wget gnupg lsb-release ca-certificates \
     software-properties-common ufw fail2ban git unzip curl
-}
-
-bl_timezone() {
-  timedatectl set-timezone "$TIMEZONE"
 }
 
 bl_user() {
@@ -562,8 +536,6 @@ bl_ufw() {
   ufw default deny incoming
   ufw default allow outgoing
   ufw allow "$SSH_PORT"/tcp comment 'SSH'
-  ufw allow 80/tcp  comment 'HTTP'
-  ufw allow 443/tcp comment 'HTTPS'
   ufw --force enable
 }
 
@@ -581,17 +553,45 @@ set_sshd() {
 bl_ssh_harden() {
   local cfg=/etc/ssh/sshd_config
   cp "$cfg" "${cfg}.bak.$(date +%s)"
+
   set_sshd Port                   "$SSH_PORT"
   set_sshd PermitRootLogin        "no"
   set_sshd PasswordAuthentication "yes"   # flipped to no after key enrollment
 
-  # Ubuntu 22.10+ uses ssh.socket activation, which overrides Port in sshd_config.
-  if systemctl list-unit-files | grep -q '^ssh\.socket'; then
-    systemctl disable --now ssh.socket 2>/dev/null || true
-  fi
+  # Make ssh.service the canonical listener. Mask ssh.socket so it can't
+  # auto-bind :22 on reboot or after an openssh-server upgrade.
+  systemctl disable --now ssh.socket 2>/dev/null || true
+  systemctl mask        ssh.socket 2>/dev/null || true
+  rm -f /etc/systemd/system/ssh.socket.d/listen.conf
+  rmdir /etc/systemd/system/ssh.socket.d 2>/dev/null || true
+
+  systemctl unmask ssh.service 2>/dev/null || true
+  systemctl enable ssh.service 2>/dev/null || true
+  systemctl daemon-reload
 
   sshd -t
-  systemctl restart ssh
+  # KillMode=process leaves orphan sshd listeners on the old port; pkill them.
+  # User sessions are forked children, not [listener] masters, so they survive.
+  systemctl stop ssh.service 2>/dev/null || true
+  pkill -TERM -f 'sshd:.*-D \[listener\]' 2>/dev/null || true
+  sleep 1
+  pkill -KILL -f 'sshd:.*-D \[listener\]' 2>/dev/null || true
+  systemctl start ssh.service
+
+  # Confirm the kernel actually bound the new port. systemctl restart can
+  # return success without the listener coming up cleanly in edge cases.
+  local i
+  for ((i=0; i<5; i++)); do
+    if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${SSH_PORT}\$"; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "ERROR: ssh.service did not bind to port $SSH_PORT" >&2
+  ss -tlnH 2>&1 || true
+  systemctl status ssh.service --no-pager -l 2>&1 || true
+  journalctl -u ssh.service --no-pager -n 30 2>&1 || true
+  return 1
 }
 
 bl_fail2ban() {
@@ -653,7 +653,7 @@ enroll_ssh_key() {
       chmod 600 "$auth_keys"
       sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
       sshd -t
-      systemctl restart ssh
+      # ssh@.service re-reads sshd_config per connection; restarting would clash with ssh.socket's listener.
       ;;
     skip)
       # nothing to do — verifier will surface the "password auth still on" warning
@@ -765,8 +765,8 @@ cmd_install() {
   # ── confirm ──
   section "Confirm"
   body "${C_BOLD}user${C_RESET}      $USERNAME (sudo${enabled[*]+ · docker if selected})"
-  body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login off, password auth temp on"
-  body "${C_BOLD}firewall${C_RESET}  UFW — 22 closed · 80/443/$SSH_PORT open"
+  body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login off"
+  body "${C_BOLD}firewall${C_RESET}  UFW — only $SSH_PORT/tcp open"
   if (( ${#enabled[@]} == 0 )); then
     body "${C_BOLD}install${C_RESET}   ${C_DIM}(none — baseline only)${C_RESET}"
   else
@@ -778,7 +778,6 @@ cmd_install() {
     done
     body "${C_BOLD}install${C_RESET}   $list"
   fi
-  body "${C_BOLD}timezone${C_RESET}  $TIMEZONE"
   rail
 
   local go
@@ -798,7 +797,6 @@ cmd_install() {
   export DEBIAN_FRONTEND=noninteractive
 
   step_run "System update"               bl_update
-  step_run "Timezone → $TIMEZONE"        bl_timezone
   step_run "User $USERNAME"              bl_user
   step_run "Firewall (UFW)"              bl_ufw
   step_run "SSH hardening"               bl_ssh_harden
@@ -870,15 +868,6 @@ do_check() {
     ko "$USERNAME not in sudo group"
   fi
 
-  # ── timezone ──
-  local tz
-  tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
-  if [[ "$tz" == "$TIMEZONE" ]]; then
-    ok "timezone = $tz"
-  else
-    note "timezone = '$tz' (expected $TIMEZONE)"
-  fi
-
   # ── ssh ──
   if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${SSH_PORT}\$"; then
     ok "sshd listening on $SSH_PORT"
@@ -896,9 +885,14 @@ do_check() {
     ko "PermitRootLogin not 'no'"
   fi
   if systemctl is-active --quiet ssh.socket 2>/dev/null; then
-    ko "ssh.socket still active (overrides sshd_config Port)"
+    ko "ssh.socket should be masked but is active"
   else
-    ok "ssh.socket disabled"
+    ok "ssh.socket masked/inactive"
+  fi
+  if systemctl is-active --quiet ssh.service 2>/dev/null; then
+    ok "ssh.service active"
+  else
+    ko "ssh.service not active"
   fi
   if sshd -t 2>/dev/null; then
     ok "sshd config valid"
@@ -929,14 +923,11 @@ do_check() {
   else
     ko "UFW inactive"
   fi
-  local p
-  for p in "$SSH_PORT" 80 443; do
-    if ufw status 2>/dev/null | grep -qE "^${p}/tcp[[:space:]]+ALLOW"; then
-      ok "$p/tcp allowed"
-    else
-      ko "$p/tcp not allowed"
-    fi
-  done
+  if ufw status 2>/dev/null | grep -qE "^${SSH_PORT}/tcp[[:space:]]+ALLOW"; then
+    ok "$SSH_PORT/tcp allowed"
+  else
+    ko "$SSH_PORT/tcp not allowed"
+  fi
 
   # ── fail2ban ──
   if systemctl is-active --quiet fail2ban; then
@@ -970,6 +961,21 @@ do_check() {
 
   body ""
   body "${C_BOLD}Connect:${C_RESET}  ssh -p $SSH_PORT $USERNAME@$vps_ip"
+
+  # ── post-install sign-in hints (component-owned, optional) ──
+  local -a hints=()
+  local k
+  for k in "${ENABLED_COMPONENTS[@]}"; do
+    [[ -n "${COMPONENT_SIGNIN[$k]:-}" ]] && hints+=("${COMPONENT_SIGNIN[$k]}")
+  done
+  if (( ${#hints[@]} > 0 )); then
+    body "${C_BOLD}Sign in:${C_RESET}  ${hints[0]}"
+    local i
+    for ((i=1; i<${#hints[@]}; i++)); do
+      body "          ${hints[i]}"
+    done
+  fi
+
   body "${C_DIM}Note: docker group membership requires a fresh login.${C_RESET}"
   printf '\n'
 
