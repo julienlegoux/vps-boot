@@ -144,16 +144,17 @@ prompt_text() {
   local label=$1
   local out_var=$2
   local default=${3:-}
-  local input
+  local input prompt_str
 
   printf '\n%s◇%s  %s%s%s\n' "$C_ORANGE" "$C_RESET" "$C_BOLD" "$label" "$C_RESET"
-  printf '%s│%s  %s›%s ' "$C_DIM" "$C_RESET" "$C_CYAN" "$C_RESET"
+  # \001…\002 mark colour codes zero-width so readline's edge-stop respects the prompt.
+  prompt_str=$(printf '\001%s\002│\001%s\002  \001%s\002›\001%s\002 ' \
+    "$C_DIM" "$C_RESET" "$C_CYAN" "$C_RESET")
 
   if [[ -n "$default" ]]; then
-    # use readline to pre-fill an editable default
-    IFS= read -r -e -i "$default" input < /dev/tty
+    IFS= read -r -e -i "$default" -p "$prompt_str" input < /dev/tty
   else
-    IFS= read -r input < /dev/tty
+    IFS= read -r -e -p "$prompt_str" input < /dev/tty
   fi
 
   printf -v "$out_var" '%s' "${input:-$default}"
@@ -564,8 +565,6 @@ bl_ufw() {
   ufw default deny incoming
   ufw default allow outgoing
   ufw allow "$SSH_PORT"/tcp comment 'SSH'
-  ufw allow 80/tcp  comment 'HTTP'
-  ufw allow 443/tcp comment 'HTTPS'
   ufw --force enable
 }
 
@@ -583,17 +582,26 @@ set_sshd() {
 bl_ssh_harden() {
   local cfg=/etc/ssh/sshd_config
   cp "$cfg" "${cfg}.bak.$(date +%s)"
-  set_sshd Port                   "$SSH_PORT"
   set_sshd PermitRootLogin        "no"
   set_sshd PasswordAuthentication "yes"   # flipped to no after key enrollment
 
-  # Ubuntu 22.10+ uses ssh.socket activation, which overrides Port in sshd_config.
-  if systemctl list-unit-files | grep -q '^ssh\.socket'; then
-    systemctl disable --now ssh.socket 2>/dev/null || true
-  fi
+  # Ubuntu 22.10+: ssh.socket owns the listener — override its ListenStream via a drop-in.
+  install -d -m 0755 /etc/systemd/system/ssh.socket.d
+  cat > /etc/systemd/system/ssh.socket.d/listen.conf <<EOF
+[Socket]
+ListenStream=
+ListenStream=$SSH_PORT
+EOF
 
+  # Migration: undo state left by earlier versions that masked ssh.socket / enabled ssh.service.
+  systemctl unmask ssh.socket 2>/dev/null || true
+  systemctl enable ssh.socket 2>/dev/null || true
+  systemctl stop    ssh.service 2>/dev/null || true
+  systemctl disable ssh.service 2>/dev/null || true
+
+  systemctl daemon-reload
   sshd -t
-  systemctl restart ssh
+  systemctl restart ssh.socket
 }
 
 bl_fail2ban() {
@@ -655,7 +663,7 @@ enroll_ssh_key() {
       chmod 600 "$auth_keys"
       sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
       sshd -t
-      systemctl restart ssh
+      # ssh@.service re-reads sshd_config per connection; restarting would clash with ssh.socket's listener.
       ;;
     skip)
       # nothing to do — verifier will surface the "password auth still on" warning
@@ -690,6 +698,16 @@ random_port() {
 
 cmd_install() {
   [[ $EUID -eq 0 ]] || die "Must run as root."
+
+  # Re-exec in a transient systemd scope so the install survives the SSH session dying when ssh.socket cycles.
+  if [[ "${VPS_BOOT_DETACHED:-}" != "1" ]] \
+     && [[ -f "${BASH_SOURCE[0]}" ]] \
+     && command -v systemd-run >/dev/null 2>&1; then
+    exec env VPS_BOOT_DETACHED=1 systemd-run \
+      --scope --collect --quiet --pty \
+      --unit="vps-boot-install-$$" \
+      -- bash "${BASH_SOURCE[0]}" install "$@"
+  fi
 
   local arg_user=${1:-}
   local arg_port=${2:-}
@@ -768,7 +786,7 @@ cmd_install() {
   section "Confirm"
   body "${C_BOLD}user${C_RESET}      $USERNAME (sudo${enabled[*]+ · docker if selected})"
   body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login off, password auth temp on"
-  body "${C_BOLD}firewall${C_RESET}  UFW — 22 closed · 80/443/$SSH_PORT open"
+  body "${C_BOLD}firewall${C_RESET}  UFW — only $SSH_PORT/tcp open"
   if (( ${#enabled[@]} == 0 )); then
     body "${C_BOLD}install${C_RESET}   ${C_DIM}(none — baseline only)${C_RESET}"
   else
@@ -886,10 +904,12 @@ do_check() {
   else
     ko "PermitRootLogin not 'no'"
   fi
-  if systemctl is-active --quiet ssh.socket 2>/dev/null; then
-    ko "ssh.socket still active (overrides sshd_config Port)"
+  if systemctl is-active --quiet ssh.socket 2>/dev/null \
+     && systemctl show ssh.socket -p Listen --value 2>/dev/null \
+          | grep -qE "Stream\s+(\[::\]:|0\.0\.0\.0:|)${SSH_PORT}( |\$)"; then
+    ok "ssh.socket listening on $SSH_PORT"
   else
-    ok "ssh.socket disabled"
+    ko "ssh.socket not listening on $SSH_PORT"
   fi
   if sshd -t 2>/dev/null; then
     ok "sshd config valid"
