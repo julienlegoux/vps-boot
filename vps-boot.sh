@@ -570,7 +570,13 @@ bl_ssh_harden() {
   systemctl daemon-reload
 
   sshd -t
-  systemctl restart ssh.service
+  # KillMode=process leaves orphan sshd listeners on the old port; pkill them.
+  # User sessions are forked children, not [listener] masters, so they survive.
+  systemctl stop ssh.service 2>/dev/null || true
+  pkill -TERM -f 'sshd:.*-D \[listener\]' 2>/dev/null || true
+  sleep 1
+  pkill -KILL -f 'sshd:.*-D \[listener\]' 2>/dev/null || true
+  systemctl start ssh.service
 
   # Confirm the kernel actually bound the new port. systemctl restart can
   # return success without the listener coming up cleanly in edge cases.
@@ -759,7 +765,7 @@ cmd_install() {
   # ── confirm ──
   section "Confirm"
   body "${C_BOLD}user${C_RESET}      $USERNAME (sudo${enabled[*]+ · docker if selected})"
-  body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login off, password auth temp on"
+  body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login off"
   body "${C_BOLD}firewall${C_RESET}  UFW — only $SSH_PORT/tcp open"
   if (( ${#enabled[@]} == 0 )); then
     body "${C_BOLD}install${C_RESET}   ${C_DIM}(none — baseline only)${C_RESET}"
