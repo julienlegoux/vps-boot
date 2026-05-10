@@ -350,12 +350,11 @@ _msel_print_line() {
   local glyph
   if (( ${selected[i]} )); then glyph="${C_GREEN}◉${C_RESET}"; else glyph="${C_DIM}◌${C_RESET}"; fi
 
-  printf '%s│%s  ' "$C_DIM" "$C_RESET"
   if (( i == current )); then
-    printf '%s ' "$glyph"
-    printf '%s%s%s' "$C_BOLD" "${names[i]}" "$C_RESET"
+    printf '%s│%s %s›%s %s ' "$C_DIM" "$C_RESET" "$C_CYAN" "$C_RESET" "$glyph"
+    printf '%s%s%s' "$C_CYAN$C_BOLD" "${names[i]}" "$C_RESET"
   else
-    printf '%s ' "$glyph"
+    printf '%s│%s   %s ' "$C_DIM" "$C_RESET" "$glyph"
     printf '%s' "${names[i]}"
   fi
   if [[ -n "${descs[i]}" ]]; then
