@@ -512,6 +512,61 @@ check_claude() {
 register claude "Claude Code" "Anthropic's CLI" 1 system install_claude check_claude \
   "claude                   (first run opens the OAuth browser flow)"
 
+# ─── python ────────────────────────────────────────────────
+install_python() {
+  add-apt-repository -y ppa:deadsnakes/ppa
+  apt-get update -y
+  local pyver
+  pyver=$(apt-cache search '^python3\.[0-9]+$' \
+    | grep -oP 'python3\.\d+' | sort -t. -k2 -n | tail -1)
+  apt-get install -y "$pyver" "${pyver}-venv" "${pyver}-distutils" python3-pip
+  update-alternatives --install /usr/bin/python3 python3 "/usr/bin/$pyver" 1
+  update-alternatives --install /usr/bin/python  python  "/usr/bin/$pyver" 1
+}
+
+check_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    local v
+    v=$(python3 --version 2>/dev/null | awk '{print $2}' || echo "?")
+    ok "python $v"
+  else
+    ko "python3 not installed"
+  fi
+  if command -v pip3 >/dev/null 2>&1; then
+    local pv
+    pv=$(pip3 --version 2>/dev/null | awk '{print $2}' || echo "?")
+    ok "pip $pv"
+  else
+    ko "pip not installed"
+  fi
+}
+
+register python "Python + pip" "latest Python 3 via deadsnakes PPA" 1 system install_python check_python
+
+# ─── go ────────────────────────────────────────────────────
+install_go() {
+  local ver arch
+  ver=$(curl -fsSL "https://go.dev/VERSION?m=text" | head -1)
+  arch=$(dpkg --print-architecture)
+  rm -rf /usr/local/go
+  curl -fsSL "https://go.dev/dl/${ver}.linux-${arch}.tar.gz" \
+    | tar -C /usr/local -xz
+  printf 'export PATH=$PATH:/usr/local/go/bin\n' > /etc/profile.d/go.sh
+  chmod 644 /etc/profile.d/go.sh
+}
+
+check_go() {
+  if [ -x /usr/local/go/bin/go ]; then
+    local v
+    v=$(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}' || echo "?")
+    ok "go $v"
+  else
+    ko "go not installed"
+  fi
+}
+
+register go "Go" "latest Go via go.dev" 1 system install_go check_go
+
 # ════════════════════════════════════════════════════════════════════════════
 # Baseline (mandatory, ordered) — NOT registered, always run
 # ════════════════════════════════════════════════════════════════════════════
