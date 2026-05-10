@@ -567,6 +567,25 @@ check_go() {
 
 register go "Go" "latest Go via go.dev" 1 system install_go check_go
 
+# ─── hermes ────────────────────────────────────────────────
+install_hermes() {
+  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+    | bash -s -- --skip-setup
+}
+
+check_hermes() {
+  if command -v hermes >/dev/null 2>&1; then
+    local v
+    v=$(hermes --version 2>/dev/null | head -1 || echo "?")
+    ok "hermes $v"
+  else
+    ko "hermes not installed"
+  fi
+}
+
+register hermes "Hermes" "NousResearch AI agent" 1 system install_hermes check_hermes \
+  "hermes setup             (configure LLM provider and API keys)"
+
 # ════════════════════════════════════════════════════════════════════════════
 # Baseline (mandatory, ordered) — NOT registered, always run
 # ════════════════════════════════════════════════════════════════════════════
