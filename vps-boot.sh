@@ -516,10 +516,29 @@ register claude "Claude Code" "Anthropic's CLI" 1 system install_claude check_cl
 install_python() {
   add-apt-repository -y ppa:deadsnakes/ppa
   apt-get update -y
-  local pyver
-  pyver=$(apt-cache search '^python3\.[0-9]+$' \
-    | grep -oP 'python3\.\d+' | sort -t. -k2 -n | tail -1)
-  apt-get install -y "$pyver" "${pyver}-venv" "${pyver}-distutils" python3-pip
+
+  # Pick the newest python3.X that actually has an installable candidate.
+  # Deadsnakes lists pre-release names (e.g. 3.15) before the binary is shipped
+  # for the current Ubuntu release, so we have to probe with --dry-run.
+  local pyver="" v
+  for v in $(apt-cache search '^python3\.[0-9]+$' \
+              | grep -oP 'python3\.\d+' \
+              | sort -t. -k2 -n -r); do
+    if apt-get install -y --dry-run "$v" "${v}-venv" >/dev/null 2>&1; then
+      pyver="$v"
+      break
+    fi
+  done
+  [ -n "$pyver" ] || { echo "no installable Python found in deadsnakes PPA" >&2; return 1; }
+
+  # distutils was removed from stdlib in 3.12 and deadsnakes no longer ships
+  # python3.X-distutils for newer versions, so we don't install it.
+  apt-get install -y "$pyver" "${pyver}-venv"
+
+  # Bootstrap pip for the new interpreter via ensurepip (ships with python3.X-venv).
+  # python3-pip would only wire pip to the system Python, not our $pyver.
+  "/usr/bin/$pyver" -m ensurepip --upgrade --default-pip
+
   update-alternatives --install /usr/bin/python3 python3 "/usr/bin/$pyver" 1
   update-alternatives --install /usr/bin/python  python  "/usr/bin/$pyver" 1
 }
