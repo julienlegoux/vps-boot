@@ -587,21 +587,24 @@ register go "Go" "latest Go via go.dev" 1 system install_go check_go
 
 # ─── hermes ────────────────────────────────────────────────
 install_hermes() {
-  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
-    | bash -s -- --skip-setup
+  sudo -u "$USERNAME" -H bash <<'EOF'
+set -eo pipefail
+curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+  | bash -s -- --skip-setup
+EOF
 }
 
 check_hermes() {
-  if command -v hermes >/dev/null 2>&1; then
-    local v
-    v=$(hermes --version 2>/dev/null | head -1 || echo "?")
+  local v
+  v=$(sudo -u "$USERNAME" -H bash -lc 'command -v hermes >/dev/null 2>&1 && hermes --version 2>/dev/null | head -1' || true)
+  if [[ -n "$v" ]]; then
     ok "hermes $v"
   else
     ko "hermes not installed"
   fi
 }
 
-register hermes "Hermes" "NousResearch AI agent" 1 system install_hermes check_hermes \
+register hermes "Hermes" "NousResearch AI agent" 1 user install_hermes check_hermes \
   "hermes setup             (configure LLM provider and API keys)"
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -961,7 +964,17 @@ do_check() {
   fi
 
   # ── ssh ──
-  if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${SSH_PORT}\$"; then
+  # Retry briefly: the listener can blip during a service reload (fail2ban,
+  # daemon-reload) and a one-shot check would falsely flag ✗.
+  local i listening=0
+  for ((i=0; i<5; i++)); do
+    if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${SSH_PORT}\$"; then
+      listening=1
+      break
+    fi
+    sleep 1
+  done
+  if (( listening )); then
     ok "sshd listening on $SSH_PORT"
   else
     ko "sshd not listening on $SSH_PORT"
