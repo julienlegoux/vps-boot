@@ -512,6 +512,25 @@ check_claude() {
 register claude "Claude Code" "Anthropic's CLI" 1 system install_claude check_claude \
   "claude                   (first run opens the OAuth browser flow)"
 
+# ─── hermes ────────────────────────────────────────────────
+install_hermes() {
+  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+    | bash -s -- --skip-setup
+}
+
+check_hermes() {
+  if command -v hermes >/dev/null 2>&1; then
+    local v
+    v=$(hermes --version 2>/dev/null | head -1 || echo "?")
+    ok "hermes $v"
+  else
+    ko "hermes not installed"
+  fi
+}
+
+register hermes "Hermes" "NousResearch AI agent" 1 system install_hermes check_hermes \
+  "hermes setup             (configure LLM provider and API keys)"
+
 # ════════════════════════════════════════════════════════════════════════════
 # Baseline (mandatory, ordered) — NOT registered, always run
 # ════════════════════════════════════════════════════════════════════════════
