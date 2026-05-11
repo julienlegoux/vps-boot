@@ -587,6 +587,9 @@ register go "Go" "latest Go via go.dev" 1 system install_go check_go
 
 # ─── hermes ────────────────────────────────────────────────
 install_hermes() {
+  # Upstream installer shells out to `sudo apt-get install ffmpeg`. Prime
+  # the sudo timestamp for $USERNAME on this tty so it doesn't prompt.
+  echo "$USER_PASSWORD" | sudo -u "$USERNAME" -S -v
   sudo -u "$USERNAME" -H bash <<'EOF'
 set -eo pipefail
 curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
