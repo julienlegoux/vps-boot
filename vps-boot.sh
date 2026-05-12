@@ -538,21 +538,29 @@ install_python() {
   # python3-pip would only wire pip to the system Python, not our $pyver.
   "/usr/bin/$pyver" -m ensurepip --upgrade --default-pip
 
-  update-alternatives --install /usr/bin/python3 python3 "/usr/bin/$pyver" 1
-  update-alternatives --install /usr/bin/python  python  "/usr/bin/$pyver" 1
+  # Do NOT repoint /usr/bin/python3 — distro packages (fail2ban, apt itself,
+  # etc.) are built against the system Python and break under a newer
+  # interpreter (e.g. sre_constants was removed in 3.13). Only expose the
+  # new interpreter as `python` for interactive use.
+  update-alternatives --install /usr/bin/python python "/usr/bin/$pyver" 1
 }
 
 check_python() {
-  if command -v python3 >/dev/null 2>&1; then
+  # Report the `python` alternative (deadsnakes interpreter) rather than
+  # `python3` (system Python), since the install step deliberately leaves
+  # /usr/bin/python3 alone to avoid breaking distro services.
+  if command -v python >/dev/null 2>&1; then
     local v
-    v=$(python3 --version 2>/dev/null | awk '{print $2}' || echo "?")
+    v=$(python --version 2>/dev/null | awk '{print $2}' || echo "?")
     ok "python $v"
   else
-    ko "python3 not installed"
+    ko "python not installed"
   fi
-  if command -v pip3 >/dev/null 2>&1; then
+  local py_bin
+  py_bin=$(command -v python || true)
+  if [ -n "$py_bin" ] && "$py_bin" -m pip --version >/dev/null 2>&1; then
     local pv
-    pv=$(pip3 --version 2>/dev/null | awk '{print $2}' || echo "?")
+    pv=$("$py_bin" -m pip --version 2>/dev/null | awk '{print $2}' || echo "?")
     ok "pip $pv"
   else
     ko "pip not installed"
@@ -587,14 +595,20 @@ register go "Go" "latest Go via go.dev" 1 system install_go check_go
 
 # ─── hermes ────────────────────────────────────────────────
 install_hermes() {
-  # Upstream installer shells out to `sudo apt-get install ffmpeg`. Prime
-  # the sudo timestamp for $USERNAME on this tty so it doesn't prompt.
-  echo "$USER_PASSWORD" | sudo -u "$USERNAME" -S -v
+  # Upstream installer shells out to `sudo apt-get install ffmpeg` as
+  # $USERNAME, which would prompt. Drop a temporary NOPASSWD rule for the
+  # duration of the install and remove it on the way out (success or fail).
+  local sudoers=/etc/sudoers.d/99-vps-boot-hermes
+  printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$USERNAME" > "$sudoers"
+  chmod 440 "$sudoers"
+  trap 'rm -f /etc/sudoers.d/99-vps-boot-hermes' RETURN
   sudo -u "$USERNAME" -H bash <<'EOF'
 set -eo pipefail
 curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
   | bash -s -- --skip-setup
 EOF
+  rm -f "$sudoers"
+  trap - RETURN
 }
 
 check_hermes() {
