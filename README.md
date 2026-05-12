@@ -6,16 +6,23 @@
 curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh | sudo bash -s install
 ```
 
+Prefer the bleeding edge? Swap `main` for `develop`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-boot.sh | sudo bash -s install
+```
+
+---
+
 ## Why
 
 - **Hardened by default** — non-root sudo user, UFW with only the right ports open, fail2ban on SSH, root login disabled, custom SSH port, password auth disabled after key enrollment.
-- **Batteries-included dev toolchain** — Docker + Compose, GitHub CLI, Node LTS via nvm, Bun, Claude Code. Pick all of them (QuickStart) or pick your own (Custom).
+- **Batteries-included dev toolchain** — Docker, GitHub CLI, Node, Bun, Python, Go, Claude Code, Hermes. Pick all of them (QuickStart) or pick your own (Custom).
 - **Modular** — one block per tool. Adding a new component is one `register` line + two functions, in one section. The wizard and the verifier pick it up automatically.
-- **Verifies itself** — the install ends by running its own verifier as the "Done" screen. Re-runnable any time via `vps-boot.sh check`.
 
 ## What you get
 
-### Baseline (always installed, in this order)
+### Baseline — always installed, in this order
 
 | Step              | Notes                                                            |
 |-------------------|------------------------------------------------------------------|
@@ -25,15 +32,18 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot
 | SSH hardening     | custom port, root login off, `sshd_config` backed up first       |
 | fail2ban          | sshd jail · 1h ban · 5 retries / 10 min                          |
 
-### Toolchain (toggleable in Custom mode)
+### Toolchain — toggleable in Custom mode
 
-| Tool              | What it is                          |
-|-------------------|-------------------------------------|
-| Docker + Compose  | Docker CE + buildx + compose plugin |
-| GitHub CLI        | `gh`                                |
-| Node LTS (via nvm)| `nvm` + Node LTS                    |
-| Bun               | the Bun JS runtime                  |
-| Claude Code       | Anthropic's `claude` CLI            |
+| Tool              | What it is                                |
+|-------------------|-------------------------------------------|
+| Docker + Compose  | Docker CE + buildx + compose plugin       |
+| GitHub CLI        | `gh`                                      |
+| Node LTS          | `nvm` + current Node LTS                  |
+| Bun               | the Bun JS runtime                        |
+| Python + pip      | latest Python 3 via the deadsnakes PPA    |
+| Go                | latest Go from go.dev                     |
+| Claude Code       | Anthropic's `claude` CLI                  |
+| Hermes            | NousResearch AI agent                     |
 
 ## Usage
 
@@ -65,21 +75,13 @@ sudo ./vps-boot.sh install julien 2222  # username + port pre-filled
 sudo ./vps-boot.sh --help
 ```
 
-### Re-run the verifier any time
-
-```bash
-sudo ./vps-boot.sh check julien 47829
-```
-
-Same output as the auto-check at the end of `install`, just standalone.
-
 ## After install — push your SSH key
 
 The wizard pauses and shows you copy-pasteable one-liners for both Linux/macOS and Windows, pre-filled with your real user, IP, and port. Type `ok` to lock down password auth, or `skip` to keep it on and lock down later.
 
 ## Adding a component
 
-The script's toolchain layer is a registry. Adding a new tool (e.g. `btop`) is three things in one section: an `install_btop` function, a `check_btop` function, and one `register` line. See [`CLAUDE.md`](./CLAUDE.md) for the contract and a worked example.
+The toolchain is a registry. Adding a new tool (e.g. `btop`) is three things in one section: an `install_btop` function, a `check_btop` function, and one `register` line. See [`CLAUDE.md`](./.claude/CLAUDE.md) for the contract and a worked example.
 
 ## Recovery
 
