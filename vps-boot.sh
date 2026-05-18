@@ -413,7 +413,9 @@ install_docker() {
     docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin
   # root already has socket access; only non-root users need the group.
-  [[ "$USERNAME" != "root" ]] && usermod -aG docker "$USERNAME"
+  if [[ "$USERNAME" != "root" ]]; then
+    usermod -aG docker "$USERNAME"
+  fi
 }
 
 check_docker() {
