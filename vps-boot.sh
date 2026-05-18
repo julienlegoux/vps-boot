@@ -350,12 +350,11 @@ _msel_print_line() {
   local glyph
   if (( ${selected[i]} )); then glyph="${C_GREEN}◉${C_RESET}"; else glyph="${C_DIM}◌${C_RESET}"; fi
 
-  printf '%s│%s  ' "$C_DIM" "$C_RESET"
   if (( i == current )); then
-    printf '%s ' "$glyph"
-    printf '%s%s%s' "$C_BOLD" "${names[i]}" "$C_RESET"
+    printf '%s│%s %s›%s %s ' "$C_DIM" "$C_RESET" "$C_CYAN" "$C_RESET" "$glyph"
+    printf '%s%s%s' "$C_CYAN$C_BOLD" "${names[i]}" "$C_RESET"
   else
-    printf '%s ' "$glyph"
+    printf '%s│%s   %s ' "$C_DIM" "$C_RESET" "$glyph"
     printf '%s' "${names[i]}"
   fi
   if [[ -n "${descs[i]}" ]]; then
@@ -511,6 +510,119 @@ check_claude() {
 
 register claude "Claude Code" "Anthropic's CLI" 1 system install_claude check_claude \
   "claude                   (first run opens the OAuth browser flow)"
+
+# ─── python ────────────────────────────────────────────────
+install_python() {
+  add-apt-repository -y ppa:deadsnakes/ppa
+  apt-get update -y
+
+  # Pick the newest python3.X that actually has an installable candidate.
+  # Deadsnakes lists pre-release names (e.g. 3.15) before the binary is shipped
+  # for the current Ubuntu release, so we have to probe with --dry-run.
+  local pyver="" v
+  for v in $(apt-cache search '^python3\.[0-9]+$' \
+              | grep -oP 'python3\.\d+' \
+              | sort -t. -k2 -n -r); do
+    if apt-get install -y --dry-run "$v" "${v}-venv" >/dev/null 2>&1; then
+      pyver="$v"
+      break
+    fi
+  done
+  [ -n "$pyver" ] || { echo "no installable Python found in deadsnakes PPA" >&2; return 1; }
+
+  # distutils was removed from stdlib in 3.12 and deadsnakes no longer ships
+  # python3.X-distutils for newer versions, so we don't install it.
+  apt-get install -y "$pyver" "${pyver}-venv"
+
+  # Bootstrap pip for the new interpreter via ensurepip (ships with python3.X-venv).
+  # python3-pip would only wire pip to the system Python, not our $pyver.
+  "/usr/bin/$pyver" -m ensurepip --upgrade --default-pip
+
+  # Do NOT repoint /usr/bin/python3 — distro packages (fail2ban, apt itself,
+  # etc.) are built against the system Python and break under a newer
+  # interpreter (e.g. sre_constants was removed in 3.13). Only expose the
+  # new interpreter as `python` for interactive use.
+  update-alternatives --install /usr/bin/python python "/usr/bin/$pyver" 1
+}
+
+check_python() {
+  # Report the `python` alternative (deadsnakes interpreter) rather than
+  # `python3` (system Python), since the install step deliberately leaves
+  # /usr/bin/python3 alone to avoid breaking distro services.
+  if command -v python >/dev/null 2>&1; then
+    local v
+    v=$(python --version 2>/dev/null | awk '{print $2}' || echo "?")
+    ok "python $v"
+  else
+    ko "python not installed"
+  fi
+  local py_bin
+  py_bin=$(command -v python || true)
+  if [ -n "$py_bin" ] && "$py_bin" -m pip --version >/dev/null 2>&1; then
+    local pv
+    pv=$("$py_bin" -m pip --version 2>/dev/null | awk '{print $2}' || echo "?")
+    ok "pip $pv"
+  else
+    ko "pip not installed"
+  fi
+}
+
+register python "Python + pip" "latest Python 3 via deadsnakes PPA" 1 system install_python check_python
+
+# ─── go ────────────────────────────────────────────────────
+install_go() {
+  local ver arch
+  ver=$(curl -fsSL "https://go.dev/VERSION?m=text" | head -1)
+  arch=$(dpkg --print-architecture)
+  rm -rf /usr/local/go
+  curl -fsSL "https://go.dev/dl/${ver}.linux-${arch}.tar.gz" \
+    | tar -C /usr/local -xz
+  printf 'export PATH=$PATH:/usr/local/go/bin\n' > /etc/profile.d/go.sh
+  chmod 644 /etc/profile.d/go.sh
+}
+
+check_go() {
+  if [ -x /usr/local/go/bin/go ]; then
+    local v
+    v=$(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}' || echo "?")
+    ok "go $v"
+  else
+    ko "go not installed"
+  fi
+}
+
+register go "Go" "latest Go via go.dev" 1 system install_go check_go
+
+# ─── hermes ────────────────────────────────────────────────
+install_hermes() {
+  # Upstream installer shells out to `sudo apt-get install ffmpeg` as
+  # $USERNAME, which would prompt. Drop a temporary NOPASSWD rule for the
+  # duration of the install and remove it on the way out (success or fail).
+  local sudoers=/etc/sudoers.d/99-vps-boot-hermes
+  printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$USERNAME" > "$sudoers"
+  chmod 440 "$sudoers"
+  trap 'rm -f /etc/sudoers.d/99-vps-boot-hermes' RETURN
+  sudo -u "$USERNAME" -H bash <<'EOF'
+set -eo pipefail
+curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+  | bash -s -- --skip-setup
+EOF
+  rm -f "$sudoers"
+  trap - RETURN
+}
+
+check_hermes() {
+  local v
+  v=$(sudo -u "$USERNAME" -H bash -lc 'command -v hermes >/dev/null 2>&1 && hermes --version 2>/dev/null | head -1' || true)
+  if [[ -n "$v" ]]; then
+    ok "hermes $v"
+  else
+    ko "hermes not installed"
+  fi
+}
+
+register hermes "Hermes" "NousResearch AI agent" 1 user install_hermes check_hermes \
+  "hermes setup             (configure LLM provider and API keys)"
 
 # ════════════════════════════════════════════════════════════════════════════
 # Baseline (mandatory, ordered) — NOT registered, always run
@@ -869,7 +981,17 @@ do_check() {
   fi
 
   # ── ssh ──
-  if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${SSH_PORT}\$"; then
+  # Retry briefly: the listener can blip during a service reload (fail2ban,
+  # daemon-reload) and a one-shot check would falsely flag ✗.
+  local i listening=0
+  for ((i=0; i<5; i++)); do
+    if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${SSH_PORT}\$"; then
+      listening=1
+      break
+    fi
+    sleep 1
+  done
+  if (( listening )); then
     ok "sshd listening on $SSH_PORT"
   else
     ko "sshd not listening on $SSH_PORT"
