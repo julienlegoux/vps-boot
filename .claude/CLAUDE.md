@@ -64,6 +64,7 @@ That's it. The wizard's Custom multi-select picks it up automatically. `cmd_chec
   ```
 - **Logging**: `step_run` redirects each step's stdout+stderr to `/tmp/vps-boot.log`. On failure it dumps the tail. Don't print to stdout from inside install fns — it'll mess up the line-rewrite.
 - **State**: `cmd_install` writes the enabled component keys (one per line) to `/etc/vps-boot/components`. `cmd_check` reads it on standalone runs so it only checks what was actually installed. If the file is missing (legacy install / first standalone run after a manual setup), it falls back to checking every registered component.
+- **Optional user creation**: the wizard's first prompt is "User account" — defaults to `skip` (everything runs as root) since the primary use case is autonomous AI environments where sudo prompts are pure friction. When skipped, `USERNAME=root`, `bl_user` is not run, `install_docker` skips the group add (root already has socket access), and `bl_ssh_harden` keeps `PermitRootLogin yes` during install (so `ssh-copy-id root@…` still works) then `enroll_ssh_key` tightens it to `prohibit-password` after lockdown. Component checks branch on `$USERNAME == "root"`.
 
 ## Visual vocabulary
 
