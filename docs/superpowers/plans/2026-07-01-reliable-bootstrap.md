@@ -692,17 +692,25 @@ write_sshd_dropin() {
   local candidate
   install -d -m 0755 "$(dirname "$SSHD_DROPIN")"
   candidate=$(mktemp "$(dirname "$SSHD_DROPIN")/.vps-boot-sshd.XXXXXX")
-  trap 'rm -f "$candidate"' RETURN
-  cat > "$candidate" <<EOF
+  if ! cat > "$candidate" <<EOF
 # Managed by vps-boot
 Port $SSH_PORT
 PermitRootLogin $permit_root
 PasswordAuthentication $password_auth
 KbdInteractiveAuthentication $kbd_auth
 EOF
-  chmod 0644 "$candidate"
-  mv -f "$candidate" "$SSHD_DROPIN"
-  trap - RETURN
+  then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! chmod 0644 "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$SSHD_DROPIN"; then
+    rm -f "$candidate"
+    return 1
+  fi
 }
 ```
 
