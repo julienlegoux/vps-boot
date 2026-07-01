@@ -430,7 +430,7 @@ git commit -m "feat: make user creation optional"
 
 **Files:**
 - Modify: `tests/test_vps_boot.sh`
-- Modify: `vps-boot.sh:395-435,859-875,1066-1070`
+- Modify: `vps-boot.sh:395-435,631-637,859-875,1066-1070`
 
 **Interfaces:**
 - Consumes: `USERNAME`, component registry, `component_is_applicable`.
@@ -523,6 +523,8 @@ check_sudo_nopasswd() {
 register sudo_nopasswd "Passwordless sudo" "sudo without password prompts" 1 system \
   install_sudo_nopasswd check_sudo_nopasswd
 ```
+
+Add `sudo` to `bl_update`'s base package list so `visudo` and the `sudo` group are guaranteed on minimal Ubuntu images before this component runs.
 
 Because Task 3 filters this key for root, no special root behavior belongs inside the installer.
 
