@@ -15,7 +15,7 @@ set -euo pipefail
 
 readonly PORT_MIN=10000
 readonly PORT_MAX=65535
-readonly LOG_FILE="/tmp/vps-boot.log"
+readonly LOG_FILE="${VPS_BOOT_LOG_FILE:-/tmp/vps-boot.log}"
 readonly STATE_DIR="/etc/vps-boot"
 readonly STATE_FILE="$STATE_DIR/components"
 
@@ -102,13 +102,22 @@ step_run() {
   printf '%s%s%s ' "$C_DIM" "$dotstr" "$C_RESET"
   printf '%s…%s' "$C_DIM" "$C_RESET"
 
-  if "$@" >>"$LOG_FILE" 2>&1; then
+  local rc had_errexit=0
+  [[ $- == *e* ]] && had_errexit=1
+  set +e
+  (
+    set -euo pipefail
+    "$@"
+  ) >>"$LOG_FILE" 2>&1
+  rc=$?
+  (( had_errexit )) && set -e
+
+  if (( rc == 0 )); then
     printf '\r%s│%s  %s◆%s  %s ' "$C_DIM" "$C_RESET" "$C_GREEN" "$C_RESET" "$label"
     printf '%s%s%s ' "$C_DIM" "$dotstr" "$C_RESET"
     printf '%s✓%s\n' "$C_GREEN" "$C_RESET"
     return 0
   else
-    local rc=$?
     printf '\r%s│%s  %s◆%s  %s ' "$C_DIM" "$C_RESET" "$C_RED" "$C_RESET" "$label"
     printf '%s%s%s ' "$C_DIM" "$dotstr" "$C_RESET"
     printf '%s✗%s\n' "$C_RED" "$C_RESET"
@@ -1150,4 +1159,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
