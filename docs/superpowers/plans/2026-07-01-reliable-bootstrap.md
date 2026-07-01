@@ -49,7 +49,12 @@ fail() { printf 'not ok - %s\n' "$1"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
 run_test() {
   local label=$1
   shift
-  if ( "$@" ); then
+  local rc
+  set +e
+  ( "$@" )
+  rc=$?
+  set -e
+  if (( rc == 0 )); then
     pass "$label"
   else
     fail "$label"
@@ -58,7 +63,7 @@ run_test() {
 
 test_source_does_not_run_main() {
   local output
-  output=$(bash -c 'set -- --help; source "$0"; printf sourced' "$SCRIPT" 2>&1)
+  output=$(bash -c 'script=$1; set -- --help; source "$script"; printf sourced' bash "$SCRIPT" 2>&1)
   [[ "$output" == "sourced" ]]
 }
 
@@ -144,14 +149,15 @@ Expected: source test passes, fail-fast test fails because the current `if "$@"`
 Replace the command portion of `step_run` with this complete status-capture and rendering block:
 
 ```bash
-  local rc
+  local rc had_errexit=0
+  [[ $- == *e* ]] && had_errexit=1
   set +e
   (
     set -euo pipefail
     "$@"
   ) >>"$LOG_FILE" 2>&1
   rc=$?
-  set -e
+  (( had_errexit )) && set -e
 
   if (( rc == 0 )); then
     printf '\r%s│%s  %s◆%s  %s ' "$C_DIM" "$C_RESET" "$C_GREEN" "$C_RESET" "$label"
