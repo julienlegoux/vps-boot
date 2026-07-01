@@ -10,6 +10,10 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 export VPS_BOOT_LOG_FILE="$TEST_ROOT/vps-boot.log"
 export VPS_BOOT_APT_LOCK_CONFIG="$TEST_ROOT/99-vps-boot-lock-timeout"
 export VPS_BOOT_SUDOERS_DIR="$TEST_ROOT/sudoers.d"
+export VPS_BOOT_SSHD_CONFIG="$TEST_ROOT/sshd_config"
+export VPS_BOOT_SSHD_DROPIN="$TEST_ROOT/sshd_config.d/00-vps-boot.conf"
+mkdir -p "$(dirname "$VPS_BOOT_SSHD_DROPIN")"
+printf 'Include %s/*.conf\n' "$(dirname "$VPS_BOOT_SSHD_DROPIN")" > "$VPS_BOOT_SSHD_CONFIG"
 
 pass() { printf 'ok - %s\n' "$1"; PASS_COUNT=$((PASS_COUNT + 1)); }
 fail() { printf 'not ok - %s\n' "$1"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
@@ -140,6 +144,65 @@ test_sudo_nopasswd_cleans_candidate_after_chmod_failure() {
   ! compgen -G "$VPS_BOOT_SUDOERS_DIR/.vps-boot-sudo.*" >/dev/null
 }
 
+test_sshd_dropin_has_single_managed_values() {
+  SSH_PORT=2222
+  write_sshd_dropin no yes yes || return 1
+  [[ $(grep -c '^Port 2222$' "$VPS_BOOT_SSHD_DROPIN") -eq 1 ]] || return 1
+  [[ $(grep -c '^PermitRootLogin no$' "$VPS_BOOT_SSHD_DROPIN") -eq 1 ]] || return 1
+  [[ $(grep -c '^PasswordAuthentication yes$' "$VPS_BOOT_SSHD_DROPIN") -eq 1 ]] || return 1
+  [[ $(grep -c '^KbdInteractiveAuthentication yes$' "$VPS_BOOT_SSHD_DROPIN") -eq 1 ]]
+}
+
+test_lockdown_disables_password_methods_and_reloads() {
+  local systemctl_log="$TEST_ROOT/systemctl-log"
+  sshd() { return 0; }
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+  SSH_PORT=2222
+  USERNAME=alice
+
+  lockdown_ssh || return 1
+
+  grep -q '^PermitRootLogin no$' "$VPS_BOOT_SSHD_DROPIN" || return 1
+  grep -q '^PasswordAuthentication no$' "$VPS_BOOT_SSHD_DROPIN" || return 1
+  grep -q '^KbdInteractiveAuthentication no$' "$VPS_BOOT_SSHD_DROPIN" || return 1
+  [[ $(cat "$systemctl_log") == 'reload ssh.service' ]]
+}
+
+test_invalid_sshd_config_is_not_reloaded() {
+  local systemctl_log="$TEST_ROOT/systemctl-invalid-log"
+  declare -F lockdown_ssh >/dev/null || return 1
+  sshd() { return 1; }
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+  SSH_PORT=2222
+  USERNAME=alice
+  ! lockdown_ssh || return 1
+  [[ ! -e $systemctl_log ]]
+}
+
+test_sshd_effective_value_reads_sshd_T() {
+  sshd() {
+    printf '%s\n' \
+      'port 2222' \
+      'permitrootlogin no' \
+      'passwordauthentication no' \
+      'kbdinteractiveauthentication no'
+  }
+  USERNAME=alice
+  [[ $(sshd_effective_value passwordauthentication) == no ]]
+}
+
+test_root_lockdown_is_key_only() {
+  sshd() { return 0; }
+  systemctl() { return 0; }
+  SSH_PORT=2222
+  USERNAME=root
+  lockdown_ssh || return 1
+  grep -q '^PermitRootLogin prohibit-password$' "$VPS_BOOT_SSHD_DROPIN" || return 1
+  sshd_root_is_key_only prohibit-password || return 1
+  sshd_root_is_key_only without-password || return 1
+  ! sshd_root_is_key_only yes
+}
+
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
 run_test "step_run stops at the first failure" test_step_run_stops_at_first_failure
 run_test "APT lock timeout fragment is temporary" test_apt_lock_timeout_fragment
@@ -150,6 +213,11 @@ run_test "passwordless sudo defaults on and is root-filtered" test_sudo_nopasswd
 run_test "passwordless sudo validates and installs" test_install_sudo_nopasswd_validates_and_installs
 run_test "invalid sudoers leaves active rule unchanged" test_invalid_sudoers_does_not_replace_active_rule
 run_test "passwordless sudo cleans candidate after chmod failure" test_sudo_nopasswd_cleans_candidate_after_chmod_failure
+run_test "SSH drop-in has one value per managed key" test_sshd_dropin_has_single_managed_values
+run_test "SSH lockdown disables passwords and reloads" test_lockdown_disables_password_methods_and_reloads
+run_test "invalid SSH config is not reloaded" test_invalid_sshd_config_is_not_reloaded
+run_test "effective SSH values come from sshd -T" test_sshd_effective_value_reads_sshd_T
+run_test "root lockdown is key-only" test_root_lockdown_is_key_only
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))

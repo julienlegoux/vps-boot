@@ -19,6 +19,8 @@ readonly LOG_FILE="${VPS_BOOT_LOG_FILE:-/tmp/vps-boot.log}"
 readonly APT_LOCK_TIMEOUT=180
 readonly APT_LOCK_CONFIG="${VPS_BOOT_APT_LOCK_CONFIG:-/etc/apt/apt.conf.d/99-vps-boot-lock-timeout}"
 readonly SUDOERS_DIR="${VPS_BOOT_SUDOERS_DIR:-/etc/sudoers.d}"
+readonly SSHD_CONFIG="${VPS_BOOT_SSHD_CONFIG:-/etc/ssh/sshd_config}"
+readonly SSHD_DROPIN="${VPS_BOOT_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-vps-boot.conf}"
 readonly STATE_DIR="/etc/vps-boot"
 readonly STATE_FILE="$STATE_DIR/components"
 
@@ -710,28 +712,59 @@ bl_ufw() {
   ufw --force enable
 }
 
-# set_sshd <key> <value> — patches sshd_config in place (idempotent)
-set_sshd() {
-  local k=$1 v=$2
-  local cfg=/etc/ssh/sshd_config
-  if grep -qE "^[#[:space:]]*${k}\b" "$cfg"; then
-    sed -i -E "s|^[#[:space:]]*${k}.*|${k} ${v}|" "$cfg"
-  else
-    echo "${k} ${v}" >> "$cfg"
+write_sshd_dropin() {
+  local permit_root=$1 password_auth=$2 kbd_auth=$3
+  local candidate
+  install -d -m 0755 "$(dirname "$SSHD_DROPIN")"
+  candidate=$(mktemp "$(dirname "$SSHD_DROPIN")/.vps-boot-sshd.XXXXXX")
+  if ! cat > "$candidate" <<EOF
+# Managed by vps-boot
+Port $SSH_PORT
+PermitRootLogin $permit_root
+PasswordAuthentication $password_auth
+KbdInteractiveAuthentication $kbd_auth
+EOF
+  then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! chmod 0644 "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$SSHD_DROPIN"; then
+    rm -f "$candidate"
+    return 1
   fi
 }
 
-bl_ssh_harden() {
-  local cfg=/etc/ssh/sshd_config
-  cp "$cfg" "${cfg}.bak.$(date +%s)"
+lockdown_ssh() {
+  local permit_root=no
+  [[ "$USERNAME" == "root" ]] && permit_root=prohibit-password
+  write_sshd_dropin "$permit_root" no no
+  sshd -t || return 1
+  systemctl reload ssh.service
+}
 
-  set_sshd Port                   "$SSH_PORT"
+sshd_effective_value() {
+  local key=${1,,}
+  sshd -T -C "user=$USERNAME,host=localhost,addr=127.0.0.1" 2>/dev/null \
+    | awk -v wanted="$key" '$1 == wanted { print $2; exit }'
+}
+
+sshd_root_is_key_only() {
+  [[ "$1" == "prohibit-password" || "$1" == "without-password" ]]
+}
+
+bl_ssh_harden() {
+  local permit_root=no
+  cp "$SSHD_CONFIG" "${SSHD_CONFIG}.bak.$(date +%s)"
+
   if [[ "$USERNAME" == "root" ]]; then
-    set_sshd PermitRootLogin      "yes"
-  else
-    set_sshd PermitRootLogin      "no"
+    permit_root=yes
   fi
-  set_sshd PasswordAuthentication "yes"   # flipped to no after key enrollment
+  write_sshd_dropin "$permit_root" yes yes
+  sshd -t
 
   # Make ssh.service the canonical listener. Mask ssh.socket so it can't
   # auto-bind :22 on reboot or after an openssh-server upgrade.
@@ -744,7 +777,6 @@ bl_ssh_harden() {
   systemctl enable ssh.service 2>/dev/null || true
   systemctl daemon-reload
 
-  sshd -t
   # KillMode=process leaves orphan sshd listeners on the old port; pkill them.
   # User sessions are forked children, not [listener] masters, so they survive.
   systemctl stop ssh.service 2>/dev/null || true
@@ -826,12 +858,7 @@ enroll_ssh_key() {
       chown -R "$USERNAME:$USERNAME" "$user_home/.ssh"
       chmod 700 "$user_home/.ssh"
       chmod 600 "$auth_keys"
-      sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-      if [[ "$USERNAME" == "root" ]]; then
-        set_sshd PermitRootLogin "prohibit-password"
-      fi
-      sshd -t
-      # ssh@.service re-reads sshd_config per connection; restarting would clash with ssh.socket's listener.
+      lockdown_ssh
       ;;
     skip)
       # nothing to do — verifier will surface the "password auth still on" warning
@@ -1123,13 +1150,15 @@ do_check() {
   else
     ok "port 22 closed"
   fi
+  local permit_root
+  permit_root=$(sshd_effective_value permitrootlogin || true)
   if [[ "$USERNAME" == "root" ]]; then
-    if grep -qE '^[[:space:]]*PermitRootLogin[[:space:]]+prohibit-password\b' /etc/ssh/sshd_config; then
+    if sshd_root_is_key_only "$permit_root"; then
       ok "root login restricted to SSH keys"
     else
       note "root password login still enabled"
     fi
-  elif grep -qE '^[[:space:]]*PermitRootLogin[[:space:]]+no\b' /etc/ssh/sshd_config; then
+  elif [[ "$permit_root" == "no" ]]; then
     ok "root login disabled"
   else
     ko "PermitRootLogin not 'no'"
@@ -1149,10 +1178,13 @@ do_check() {
   else
     ko "sshd config invalid"
   fi
-  local pa
-  pa=$(grep -E '^[[:space:]]*PasswordAuthentication[[:space:]]+' /etc/ssh/sshd_config | awk '{print $2}' | tail -1)
-  if [[ "$pa" == "no" ]]; then
+  local pa kbd
+  pa=$(sshd_effective_value passwordauthentication || true)
+  kbd=$(sshd_effective_value kbdinteractiveauthentication || true)
+  if [[ "$pa" == "no" && "$kbd" == "no" ]]; then
     ok "password auth disabled"
+  elif [[ "$pa" != "$kbd" ]]; then
+    ko "password authentication methods disagree (password=$pa, keyboard-interactive=$kbd)"
   else
     note "password auth still enabled"
   fi
