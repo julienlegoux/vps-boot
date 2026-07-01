@@ -18,6 +18,7 @@ readonly PORT_MAX=65535
 readonly LOG_FILE="${VPS_BOOT_LOG_FILE:-/tmp/vps-boot.log}"
 readonly APT_LOCK_TIMEOUT=180
 readonly APT_LOCK_CONFIG="${VPS_BOOT_APT_LOCK_CONFIG:-/etc/apt/apt.conf.d/99-vps-boot-lock-timeout}"
+readonly SUDOERS_DIR="${VPS_BOOT_SUDOERS_DIR:-/etc/sudoers.d}"
 readonly STATE_DIR="/etc/vps-boot"
 readonly STATE_FILE="$STATE_DIR/components"
 
@@ -408,6 +409,35 @@ register() {
 # Each component: install_<key>, check_<key>, register line.
 # ════════════════════════════════════════════════════════════════════════════
 
+# ─── passwordless sudo ─────────────────────────────────────
+install_sudo_nopasswd() {
+  local target="$SUDOERS_DIR/90-vps-boot-$USERNAME"
+  local candidate
+  install -d -m 0755 "$SUDOERS_DIR"
+  candidate=$(mktemp "$SUDOERS_DIR/.vps-boot-sudo.XXXXXX")
+  trap 'rm -f "$candidate"' RETURN
+  printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$USERNAME" > "$candidate"
+  chmod 0440 "$candidate"
+  if ! visudo -cf "$candidate"; then
+    rm -f "$candidate"
+    trap - RETURN
+    return 1
+  fi
+  mv -f "$candidate" "$target"
+  trap - RETURN
+}
+
+check_sudo_nopasswd() {
+  if sudo -u "$USERNAME" -H sudo -n true >/dev/null 2>&1; then
+    ok "passwordless sudo enabled for $USERNAME"
+  else
+    ko "passwordless sudo unavailable for $USERNAME"
+  fi
+}
+
+register sudo_nopasswd "Passwordless sudo" "sudo without password prompts" 1 system \
+  install_sudo_nopasswd check_sudo_nopasswd
+
 # ─── docker ────────────────────────────────────────────────
 install_docker() {
   install -m 0755 -d /etc/apt/keyrings
@@ -656,7 +686,7 @@ bl_update() {
   apt-get upgrade -y
   apt-get install -y \
     wget gnupg lsb-release ca-certificates \
-    software-properties-common ufw fail2ban git unzip curl
+    software-properties-common ufw fail2ban git unzip curl sudo
 }
 
 bl_user() {

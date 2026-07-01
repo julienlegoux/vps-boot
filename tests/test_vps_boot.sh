@@ -9,6 +9,7 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export VPS_BOOT_LOG_FILE="$TEST_ROOT/vps-boot.log"
 export VPS_BOOT_APT_LOCK_CONFIG="$TEST_ROOT/99-vps-boot-lock-timeout"
+export VPS_BOOT_SUDOERS_DIR="$TEST_ROOT/sudoers.d"
 
 pass() { printf 'ok - %s\n' "$1"; PASS_COUNT=$((PASS_COUNT + 1)); }
 fail() { printf 'not ok - %s\n' "$1"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
@@ -84,12 +85,54 @@ test_root_skips_docker_group_change() {
   [[ ! -e $calls ]]
 }
 
+test_sudo_nopasswd_is_default_and_root_filtered() {
+  [[ ${COMPONENT_DEFAULT[sudo_nopasswd]:-} == 1 ]] || return 1
+  USERNAME=alice
+  component_is_applicable sudo_nopasswd || return 1
+  USERNAME=root
+  ! component_is_applicable sudo_nopasswd
+}
+
+test_install_sudo_nopasswd_validates_and_installs() {
+  local visudo_log="$TEST_ROOT/visudo-log"
+  visudo() {
+    printf '%s\n' "$*" >> "$visudo_log"
+    return 0
+  }
+
+  USERNAME=alice
+  install_sudo_nopasswd || return 1
+
+  local target="$VPS_BOOT_SUDOERS_DIR/90-vps-boot-alice"
+  [[ -f $target ]] || return 1
+  [[ $(cat "$target") == 'alice ALL=(ALL:ALL) NOPASSWD: ALL' ]] || return 1
+  [[ $(stat -c '%a' "$target") == 440 ]] || return 1
+  grep -q -- '-cf' "$visudo_log"
+}
+
+test_invalid_sudoers_does_not_replace_active_rule() {
+  local target="$VPS_BOOT_SUDOERS_DIR/90-vps-boot-alice"
+  mkdir -p "$VPS_BOOT_SUDOERS_DIR"
+  printf 'original\n' > "$target"
+  visudo() { return 1; }
+  USERNAME=alice
+
+  if install_sudo_nopasswd; then
+    return 1
+  fi
+
+  [[ $(cat "$target") == original ]]
+}
+
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
 run_test "step_run stops at the first failure" test_step_run_stops_at_first_failure
 run_test "APT lock timeout fragment is temporary" test_apt_lock_timeout_fragment
 run_test "skip mode configures root" test_configure_user_mode_skip
 run_test "create mode enables user creation" test_configure_user_mode_create
 run_test "root skips Docker group mutation" test_root_skips_docker_group_change
+run_test "passwordless sudo defaults on and is root-filtered" test_sudo_nopasswd_is_default_and_root_filtered
+run_test "passwordless sudo validates and installs" test_install_sudo_nopasswd_validates_and_installs
+run_test "invalid sudoers leaves active rule unchanged" test_invalid_sudoers_does_not_replace_active_rule
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))
