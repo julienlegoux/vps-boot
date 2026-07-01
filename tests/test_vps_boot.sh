@@ -121,7 +121,23 @@ test_invalid_sudoers_does_not_replace_active_rule() {
     return 1
   fi
 
-  [[ $(cat "$target") == original ]]
+  [[ $(cat "$target") == original ]] || return 1
+  ! compgen -G "$VPS_BOOT_SUDOERS_DIR/.vps-boot-sudo.*" >/dev/null
+}
+
+test_sudo_nopasswd_cleans_candidate_after_chmod_failure() {
+  local target="$VPS_BOOT_SUDOERS_DIR/90-vps-boot-alice"
+  mkdir -p "$VPS_BOOT_SUDOERS_DIR"
+  printf 'original\n' > "$target"
+  chmod() { return 23; }
+  USERNAME=alice
+
+  ( set -e; install_sudo_nopasswd )
+  local rc=$?
+
+  (( rc != 0 )) || return 1
+  [[ $(cat "$target") == original ]] || return 1
+  ! compgen -G "$VPS_BOOT_SUDOERS_DIR/.vps-boot-sudo.*" >/dev/null
 }
 
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
@@ -133,6 +149,7 @@ run_test "root skips Docker group mutation" test_root_skips_docker_group_change
 run_test "passwordless sudo defaults on and is root-filtered" test_sudo_nopasswd_is_default_and_root_filtered
 run_test "passwordless sudo validates and installs" test_install_sudo_nopasswd_validates_and_installs
 run_test "invalid sudoers leaves active rule unchanged" test_invalid_sudoers_does_not_replace_active_rule
+run_test "passwordless sudo cleans candidate after chmod failure" test_sudo_nopasswd_cleans_candidate_after_chmod_failure
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))

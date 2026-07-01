@@ -415,16 +415,22 @@ install_sudo_nopasswd() {
   local candidate
   install -d -m 0755 "$SUDOERS_DIR"
   candidate=$(mktemp "$SUDOERS_DIR/.vps-boot-sudo.XXXXXX")
-  trap 'rm -f "$candidate"' RETURN
-  printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$USERNAME" > "$candidate"
-  chmod 0440 "$candidate"
-  if ! visudo -cf "$candidate"; then
+  if ! printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$USERNAME" > "$candidate"; then
     rm -f "$candidate"
-    trap - RETURN
     return 1
   fi
-  mv -f "$candidate" "$target"
-  trap - RETURN
+  if ! chmod 0440 "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! visudo -cf "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$target"; then
+    rm -f "$candidate"
+    return 1
+  fi
 }
 
 check_sudo_nopasswd() {
