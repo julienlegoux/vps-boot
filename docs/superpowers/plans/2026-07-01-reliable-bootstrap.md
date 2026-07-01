@@ -506,16 +506,22 @@ install_sudo_nopasswd() {
   local candidate
   install -d -m 0755 "$SUDOERS_DIR"
   candidate=$(mktemp "$SUDOERS_DIR/.vps-boot-sudo.XXXXXX")
-  trap 'rm -f "$candidate"' RETURN
-  printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$USERNAME" > "$candidate"
-  chmod 0440 "$candidate"
-  if ! visudo -cf "$candidate"; then
+  if ! printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$USERNAME" > "$candidate"; then
     rm -f "$candidate"
-    trap - RETURN
     return 1
   fi
-  mv -f "$candidate" "$target"
-  trap - RETURN
+  if ! chmod 0440 "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! visudo -cf "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$target"; then
+    rm -f "$candidate"
+    return 1
+  fi
 }
 
 check_sudo_nopasswd() {
@@ -550,17 +556,39 @@ test_invalid_sudoers_does_not_replace_active_rule() {
     return 1
   fi
 
-  [[ $(cat "$target") == original ]]
+  [[ $(cat "$target") == original ]] || return 1
+  ! compgen -G "$VPS_BOOT_SUDOERS_DIR/.vps-boot-sudo.*" >/dev/null
 }
 
 run_test "invalid sudoers leaves active rule unchanged" test_invalid_sudoers_does_not_replace_active_rule
+```
+
+Also cover an unexpected post-`mktemp` failure under `errexit`:
+
+```bash
+test_sudo_nopasswd_cleans_candidate_after_chmod_failure() {
+  local target="$VPS_BOOT_SUDOERS_DIR/90-vps-boot-alice"
+  mkdir -p "$VPS_BOOT_SUDOERS_DIR"
+  printf 'original\n' > "$target"
+  chmod() { return 23; }
+  USERNAME=alice
+
+  ( set -e; install_sudo_nopasswd )
+  local rc=$?
+
+  (( rc != 0 )) || return 1
+  [[ $(cat "$target") == original ]] || return 1
+  ! compgen -G "$VPS_BOOT_SUDOERS_DIR/.vps-boot-sudo.*" >/dev/null
+}
+
+run_test "passwordless sudo cleans candidate after chmod failure" test_sudo_nopasswd_cleans_candidate_after_chmod_failure
 ```
 
 - [ ] **Step 5: Run Task 4 verification**
 
 Run syntax checks and the full test suite.
 
-Expected: `9 passed, 0 failed`; successful rule mode is 440; invalid candidates do not replace the active rule.
+Expected: `10 passed, 0 failed`; successful rule mode is 440; invalid candidates do not replace the active rule or leak temporary candidates.
 
 - [ ] **Step 6: Commit Task 4**
 
@@ -744,7 +772,7 @@ run_test "root lockdown is key-only" test_root_lockdown_is_key_only
 
 Run syntax checks and full tests.
 
-Expected: `14 passed, 0 failed`; one managed line per SSH key; no reload after failed validation; both password methods disabled; root becomes key-only.
+Expected: `15 passed, 0 failed`; one managed line per SSH key; no reload after failed validation; both password methods disabled; root becomes key-only.
 
 - [ ] **Step 8: Commit Task 5**
 
@@ -806,7 +834,7 @@ Update the wizard transcript so `User account` is first and username/password ar
 
 Run syntax checks and full tests.
 
-Expected: `15 passed, 0 failed`.
+Expected: `16 passed, 0 failed`.
 
 - [ ] **Step 5: Commit Task 6**
 
@@ -837,7 +865,7 @@ git commit -m "docs: explain reliable root and sudo setup"
 git diff --check main...HEAD
 ```
 
-Expected: both syntax checks exit 0; all 15 tests pass; `git diff --check` emits nothing.
+Expected: both syntax checks exit 0; all 16 tests pass; `git diff --check` emits nothing.
 
 - [ ] **Step 2: Run ShellCheck when installed**
 
