@@ -8,6 +8,7 @@ FAIL_COUNT=0
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export VPS_BOOT_LOG_FILE="$TEST_ROOT/vps-boot.log"
+export VPS_BOOT_APT_LOCK_CONFIG="$TEST_ROOT/99-vps-boot-lock-timeout"
 
 pass() { printf 'ok - %s\n' "$1"; PASS_COUNT=$((PASS_COUNT + 1)); }
 fail() { printf 'not ok - %s\n' "$1"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
@@ -49,8 +50,17 @@ test_step_run_stops_at_first_failure() {
   [[ $(cat "$trace") == "before" ]]
 }
 
+test_apt_lock_timeout_fragment() {
+  install_apt_lock_timeout || return 1
+  [[ -f "$VPS_BOOT_APT_LOCK_CONFIG" ]] || return 1
+  [[ $(cat "$VPS_BOOT_APT_LOCK_CONFIG") == 'DPkg::Lock::Timeout "180";' ]] || return 1
+  remove_apt_lock_timeout || return 1
+  [[ ! -e "$VPS_BOOT_APT_LOCK_CONFIG" ]]
+}
+
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
 run_test "step_run stops at the first failure" test_step_run_stops_at_first_failure
+run_test "APT lock timeout fragment is temporary" test_apt_lock_timeout_fragment
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))

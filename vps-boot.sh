@@ -16,6 +16,8 @@ set -euo pipefail
 readonly PORT_MIN=10000
 readonly PORT_MAX=65535
 readonly LOG_FILE="${VPS_BOOT_LOG_FILE:-/tmp/vps-boot.log}"
+readonly APT_LOCK_TIMEOUT=180
+readonly APT_LOCK_CONFIG="${VPS_BOOT_APT_LOCK_CONFIG:-/etc/apt/apt.conf.d/99-vps-boot-lock-timeout}"
 readonly STATE_DIR="/etc/vps-boot"
 readonly STATE_FILE="$STATE_DIR/components"
 
@@ -637,6 +639,16 @@ register hermes "Hermes" "NousResearch AI agent" 1 user install_hermes check_her
 # Baseline (mandatory, ordered) — NOT registered, always run
 # ════════════════════════════════════════════════════════════════════════════
 
+install_apt_lock_timeout() {
+  install -d -m 0755 "$(dirname "$APT_LOCK_CONFIG")"
+  printf 'DPkg::Lock::Timeout "%s";\n' "$APT_LOCK_TIMEOUT" > "$APT_LOCK_CONFIG"
+  chmod 0644 "$APT_LOCK_CONFIG"
+}
+
+remove_apt_lock_timeout() {
+  rm -f "$APT_LOCK_CONFIG"
+}
+
 bl_update() {
   apt-get update -y
   apt-get upgrade -y
@@ -910,6 +922,9 @@ cmd_install() {
     die "Aborted by user."
   fi
 
+  install_apt_lock_timeout
+  trap remove_apt_lock_timeout EXIT
+
   # ════════════════════════════════════════════════════════════════════
   # Run phase
   # ════════════════════════════════════════════════════════════════════
@@ -946,6 +961,8 @@ cmd_install() {
 
   ENABLED_COMPONENTS=("${enabled[@]}")
   do_check
+  remove_apt_lock_timeout
+  trap - EXIT
 }
 
 # ════════════════════════════════════════════════════════════════════════════
