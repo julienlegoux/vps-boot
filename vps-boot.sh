@@ -741,7 +741,7 @@ EOF
 lockdown_ssh() {
   local permit_root=no
   [[ "$USERNAME" == "root" ]] && permit_root=prohibit-password
-  write_sshd_dropin "$permit_root" no no
+  write_sshd_dropin "$permit_root" no no || return 1
   sshd -t || return 1
   systemctl reload ssh.service
 }

@@ -179,6 +179,23 @@ test_invalid_sshd_config_is_not_reloaded() {
   [[ ! -e $systemctl_log ]]
 }
 
+test_lockdown_stops_when_dropin_write_fails() {
+  local sshd_log="$TEST_ROOT/sshd-after-write-failure-log"
+  local systemctl_log="$TEST_ROOT/systemctl-after-write-failure-log"
+  write_sshd_dropin() { return 23; }
+  sshd() { printf '%s\n' "$*" >> "$sshd_log"; }
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+  SSH_PORT=2222
+  USERNAME=alice
+
+  if lockdown_ssh; then
+    return 1
+  fi
+
+  [[ ! -e $sshd_log ]] || return 1
+  [[ ! -e $systemctl_log ]]
+}
+
 test_sshd_effective_value_reads_sshd_T() {
   sshd() {
     printf '%s\n' \
@@ -216,6 +233,7 @@ run_test "passwordless sudo cleans candidate after chmod failure" test_sudo_nopa
 run_test "SSH drop-in has one value per managed key" test_sshd_dropin_has_single_managed_values
 run_test "SSH lockdown disables passwords and reloads" test_lockdown_disables_password_methods_and_reloads
 run_test "invalid SSH config is not reloaded" test_invalid_sshd_config_is_not_reloaded
+run_test "SSH lockdown stops after drop-in write failure" test_lockdown_stops_when_dropin_write_fails
 run_test "effective SSH values come from sshd -T" test_sshd_effective_value_reads_sshd_T
 run_test "root lockdown is key-only" test_root_lockdown_is_key_only
 
