@@ -58,9 +58,38 @@ test_apt_lock_timeout_fragment() {
   [[ ! -e "$VPS_BOOT_APT_LOCK_CONFIG" ]]
 }
 
+test_configure_user_mode_skip() {
+  USERNAME=someone
+  USER_PASSWORD=secret
+  CREATE_USER=1
+  configure_user_mode skip || return 1
+  [[ $CREATE_USER -eq 0 ]] || return 1
+  [[ $USERNAME == root ]] || return 1
+  [[ -z $USER_PASSWORD ]]
+}
+
+test_configure_user_mode_create() {
+  USERNAME=""
+  USER_PASSWORD=""
+  CREATE_USER=0
+  configure_user_mode create || return 1
+  [[ $CREATE_USER -eq 1 ]]
+}
+
+test_root_skips_docker_group_change() {
+  local calls="$TEST_ROOT/usermod-calls"
+  usermod() { printf '%s\n' "$*" >> "$calls"; }
+  USERNAME=root
+  add_docker_group_if_needed || return 1
+  [[ ! -e $calls ]]
+}
+
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
 run_test "step_run stops at the first failure" test_step_run_stops_at_first_failure
 run_test "APT lock timeout fragment is temporary" test_apt_lock_timeout_fragment
+run_test "skip mode configures root" test_configure_user_mode_skip
+run_test "create mode enables user creation" test_configure_user_mode_create
+run_test "root skips Docker group mutation" test_root_skips_docker_group_change
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))

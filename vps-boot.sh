@@ -423,7 +423,7 @@ install_docker() {
   apt-get install -y \
     docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin
-  usermod -aG docker "$USERNAME"
+  add_docker_group_if_needed
 }
 
 check_docker() {
@@ -436,10 +436,12 @@ check_docker() {
   else
     ko "docker daemon not running"
   fi
-  if id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-    ok "$USERNAME in docker group"
-  else
-    ko "$USERNAME not in docker group"
+  if [[ "$USERNAME" != "root" ]]; then
+    if id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+      ok "$USERNAME in docker group"
+    else
+      ko "$USERNAME not in docker group"
+    fi
   fi
 }
 
@@ -688,7 +690,11 @@ bl_ssh_harden() {
   cp "$cfg" "${cfg}.bak.$(date +%s)"
 
   set_sshd Port                   "$SSH_PORT"
-  set_sshd PermitRootLogin        "no"
+  if [[ "$USERNAME" == "root" ]]; then
+    set_sshd PermitRootLogin      "yes"
+  else
+    set_sshd PermitRootLogin      "no"
+  fi
   set_sshd PasswordAuthentication "yes"   # flipped to no after key enrollment
 
   # Make ssh.service the canonical listener. Mask ssh.socket so it can't
@@ -785,6 +791,9 @@ enroll_ssh_key() {
       chmod 700 "$user_home/.ssh"
       chmod 600 "$auth_keys"
       sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+      if [[ "$USERNAME" == "root" ]]; then
+        set_sshd PermitRootLogin "prohibit-password"
+      fi
       sshd -t
       # ssh@.service re-reads sshd_config per connection; restarting would clash with ssh.socket's listener.
       ;;
@@ -798,6 +807,33 @@ enroll_ssh_key() {
 # ════════════════════════════════════════════════════════════════════════════
 # Validation
 # ════════════════════════════════════════════════════════════════════════════
+
+configure_user_mode() {
+  case "$1" in
+    skip)
+      CREATE_USER=0
+      USERNAME=root
+      USER_PASSWORD=""
+      ;;
+    create)
+      CREATE_USER=1
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
+component_is_applicable() {
+  local key=$1
+  [[ "$key" != "sudo_nopasswd" || "$USERNAME" != "root" ]]
+}
+
+add_docker_group_if_needed() {
+  if [[ "$USERNAME" != "root" ]]; then
+    usermod -aG docker "$USERNAME"
+  fi
+}
 
 valid_username() {
   [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
@@ -829,27 +865,37 @@ cmd_install() {
   banner
 
   section "About"
-  body "vps-boot will create a sudo user, harden SSH, set up UFW + fail2ban,"
-  body "and install your selected dev tools. Takes ~3 min on a fresh Ubuntu LTS."
+  body "vps-boot will harden SSH, set up UFW + fail2ban, and install your"
+  body "selected dev tools. Run as root (default) or create a sudo user."
   rail
 
-  # ── username ──
-  while :; do
-    prompt_text "Username" USERNAME "$arg_user"
-    if ! valid_username "$USERNAME"; then
-      printf '%s│%s  %s! invalid username — must match [a-z_][a-z0-9_-]{0,31}%s\n' \
-        "$C_DIM" "$C_RESET" "$C_YELLOW" "$C_RESET"
-      arg_user=""
-      continue
-    fi
-    if id "$USERNAME" &>/dev/null; then
-      printf '%s│%s  %s! user %s already exists — pick another%s\n' \
-        "$C_DIM" "$C_RESET" "$C_YELLOW" "$USERNAME" "$C_RESET"
-      arg_user=""
-      continue
-    fi
-    break
-  done
+  # ── user account ──
+  local user_mode
+  prompt_radio "User account" user_mode \
+    "skip|run everything as root (best for autonomous AI environments)" \
+    "create|create a sudo user"
+  configure_user_mode "$user_mode"
+
+  if (( CREATE_USER )); then
+    while :; do
+      prompt_text "Username" USERNAME "$arg_user"
+      if ! valid_username "$USERNAME"; then
+        printf '%s│%s  %s! invalid username — must match [a-z_][a-z0-9_-]{0,31}%s\n' \
+          "$C_DIM" "$C_RESET" "$C_YELLOW" "$C_RESET"
+        arg_user=""
+        continue
+      fi
+      if id "$USERNAME" &>/dev/null; then
+        printf '%s│%s  %s! user %s already exists — pick another%s\n' \
+          "$C_DIM" "$C_RESET" "$C_YELLOW" "$USERNAME" "$C_RESET"
+        arg_user=""
+        continue
+      fi
+      break
+    done
+
+    prompt_password "Password for $USERNAME" USER_PASSWORD
+  fi
 
   # ── port ──
   local port_default=${arg_port:-$(random_port)}
@@ -868,9 +914,6 @@ cmd_install() {
     break
   done
 
-  # ── password ──
-  prompt_password "Password for $USERNAME" USER_PASSWORD
-
   # ── install mode ──
   local mode
   prompt_radio "Install mode" mode \
@@ -883,6 +926,7 @@ cmd_install() {
     local -a msel_args=()
     local key
     for key in "${COMPONENTS[@]}"; do
+      component_is_applicable "$key" || continue
       msel_args+=("${key}|${COMPONENT_NAME[$key]}|${COMPONENT_DESC[$key]}|${COMPONENT_DEFAULT[$key]}")
     done
     prompt_multiselect "Components" "${msel_args[@]}"
@@ -891,14 +935,20 @@ cmd_install() {
     # QuickStart — all defaults
     local key
     for key in "${COMPONENTS[@]}"; do
+      component_is_applicable "$key" || continue
       [[ "${COMPONENT_DEFAULT[$key]}" == "1" ]] && enabled+=("$key")
     done
   fi
 
   # ── confirm ──
   section "Confirm"
-  body "${C_BOLD}user${C_RESET}      $USERNAME (sudo${enabled[*]+ · docker if selected})"
-  body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login off"
+  if (( CREATE_USER )); then
+    body "${C_BOLD}user${C_RESET}      $USERNAME (sudo · docker group if selected)"
+    body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login off"
+  else
+    body "${C_BOLD}user${C_RESET}      root (no sudo user)"
+    body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login on until key lockdown"
+  fi
   body "${C_BOLD}firewall${C_RESET}  UFW — only $SSH_PORT/tcp open"
   if (( ${#enabled[@]} == 0 )); then
     body "${C_BOLD}install${C_RESET}   ${C_DIM}(none — baseline only)${C_RESET}"
@@ -933,7 +983,9 @@ cmd_install() {
   export DEBIAN_FRONTEND=noninteractive
 
   step_run "System update"               bl_update
-  step_run "User $USERNAME"              bl_user
+  if (( CREATE_USER )); then
+    step_run "User $USERNAME"            bl_user
+  fi
   step_run "Firewall (UFW)"              bl_ufw
   step_run "SSH hardening"               bl_ssh_harden
   step_run "fail2ban"                    bl_fail2ban
@@ -971,9 +1023,8 @@ cmd_install() {
 
 cmd_check() {
   [[ $EUID -eq 0 ]] || die "Must run as root."
-  USERNAME=${1:-}
+  USERNAME=${1:-root}
   SSH_PORT=${2:-1986}
-  [[ -n "$USERNAME" ]] || die "Usage: $0 check <username> [ssh_port]"
   id "$USERNAME" &>/dev/null || die "User '$USERNAME' does not exist."
   valid_port "$SSH_PORT" || die "Invalid SSH port: $SSH_PORT"
 
@@ -984,12 +1035,19 @@ cmd_check() {
     local -a filtered=()
     local k
     for k in "${ENABLED_COMPONENTS[@]}"; do
-      [[ -n "$k" ]] && filtered+=("$k")
+      [[ -n "$k" ]] || continue
+      component_is_applicable "$k" || continue
+      filtered+=("$k")
     done
     ENABLED_COMPONENTS=("${filtered[@]}")
   else
     # no state — check every registered component
-    ENABLED_COMPONENTS=("${COMPONENTS[@]}")
+    ENABLED_COMPONENTS=()
+    local k
+    for k in "${COMPONENTS[@]}"; do
+      component_is_applicable "$k" || continue
+      ENABLED_COMPONENTS+=("$k")
+    done
   fi
   do_check
 }
@@ -1000,7 +1058,9 @@ do_check() {
   section "Verify"
 
   # ── user ──
-  if id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx sudo; then
+  if [[ "$USERNAME" == "root" ]]; then
+    ok "root account selected (no sudo user)"
+  elif id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx sudo; then
     ok "$USERNAME in sudo group"
   else
     ko "$USERNAME not in sudo group"
@@ -1027,7 +1087,13 @@ do_check() {
   else
     ok "port 22 closed"
   fi
-  if grep -qE '^[[:space:]]*PermitRootLogin[[:space:]]+no\b' /etc/ssh/sshd_config; then
+  if [[ "$USERNAME" == "root" ]]; then
+    if grep -qE '^[[:space:]]*PermitRootLogin[[:space:]]+prohibit-password\b' /etc/ssh/sshd_config; then
+      ok "root login restricted to SSH keys"
+    else
+      note "root password login still enabled"
+    fi
+  elif grep -qE '^[[:space:]]*PermitRootLogin[[:space:]]+no\b' /etc/ssh/sshd_config; then
     ok "root login disabled"
   else
     ko "PermitRootLogin not 'no'"
@@ -1124,7 +1190,9 @@ do_check() {
     done
   fi
 
-  body "${C_DIM}Note: docker group membership requires a fresh login.${C_RESET}"
+  if [[ "$USERNAME" != "root" && " ${ENABLED_COMPONENTS[*]} " == *" docker "* ]]; then
+    body "${C_DIM}Note: docker group membership requires a fresh login.${C_RESET}"
+  fi
   printf '\n'
 
   (( FAIL == 0 )) || exit 1
@@ -1144,10 +1212,10 @@ ${C_BOLD}USAGE${C_RESET}
   sudo $0 --help
 
 ${C_BOLD}COMMANDS${C_RESET}
-  install   Run the interactive wizard, harden the box, install tools.
-            Args (optional) pre-fill the username and SSH port prompts.
+  install   Run the interactive wizard as root (default) or create a sudo user.
+            Args (optional) pre-fill the created username and SSH port prompts.
   check     Re-run the verifier on an existing vps-boot install.
-            Args required: username and SSH port to check.
+            Args (optional) default to root and SSH port 1986.
 
 ${C_BOLD}REMOTE${C_RESET}
   curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh \\
