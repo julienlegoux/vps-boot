@@ -15,8 +15,13 @@ set -euo pipefail
 
 readonly PORT_MIN=10000
 readonly PORT_MAX=65535
-readonly LOG_FILE="/tmp/vps-boot.log"
-readonly STATE_DIR="/etc/vps-boot"
+readonly LOG_FILE="${VPS_BOOT_LOG_FILE:-/tmp/vps-boot.log}"
+readonly APT_LOCK_TIMEOUT=180
+readonly APT_LOCK_CONFIG="${VPS_BOOT_APT_LOCK_CONFIG:-/etc/apt/apt.conf.d/99-vps-boot-lock-timeout}"
+readonly SUDOERS_DIR="${VPS_BOOT_SUDOERS_DIR:-/etc/sudoers.d}"
+readonly SSHD_CONFIG="${VPS_BOOT_SSHD_CONFIG:-/etc/ssh/sshd_config}"
+readonly SSHD_DROPIN="${VPS_BOOT_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-vps-boot.conf}"
+readonly STATE_DIR="${VPS_BOOT_STATE_DIR:-/etc/vps-boot}"
 readonly STATE_FILE="$STATE_DIR/components"
 
 # ANSI colors — disabled if stdout isn't a tty
@@ -102,13 +107,22 @@ step_run() {
   printf '%s%s%s ' "$C_DIM" "$dotstr" "$C_RESET"
   printf '%s…%s' "$C_DIM" "$C_RESET"
 
-  if "$@" >>"$LOG_FILE" 2>&1; then
+  local rc had_errexit=0
+  [[ $- == *e* ]] && had_errexit=1
+  set +e
+  (
+    set -euo pipefail
+    "$@"
+  ) >>"$LOG_FILE" 2>&1
+  rc=$?
+  (( had_errexit )) && set -e
+
+  if (( rc == 0 )); then
     printf '\r%s│%s  %s◆%s  %s ' "$C_DIM" "$C_RESET" "$C_GREEN" "$C_RESET" "$label"
     printf '%s%s%s ' "$C_DIM" "$dotstr" "$C_RESET"
     printf '%s✓%s\n' "$C_GREEN" "$C_RESET"
     return 0
   else
-    local rc=$?
     printf '\r%s│%s  %s◆%s  %s ' "$C_DIM" "$C_RESET" "$C_RED" "$C_RESET" "$label"
     printf '%s%s%s ' "$C_DIM" "$dotstr" "$C_RESET"
     printf '%s✗%s\n' "$C_RED" "$C_RESET"
@@ -397,6 +411,41 @@ register() {
 # Each component: install_<key>, check_<key>, register line.
 # ════════════════════════════════════════════════════════════════════════════
 
+# ─── passwordless sudo ─────────────────────────────────────
+install_sudo_nopasswd() {
+  local target="$SUDOERS_DIR/90-vps-boot-$USERNAME"
+  local candidate
+  install -d -m 0755 "$SUDOERS_DIR"
+  candidate=$(mktemp "$SUDOERS_DIR/.vps-boot-sudo.XXXXXX")
+  if ! printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$USERNAME" > "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! chmod 0440 "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! visudo -cf "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$target"; then
+    rm -f "$candidate"
+    return 1
+  fi
+}
+
+check_sudo_nopasswd() {
+  if sudo -u "$USERNAME" -H sudo -n true >/dev/null 2>&1; then
+    ok "passwordless sudo enabled for $USERNAME"
+  else
+    ko "passwordless sudo unavailable for $USERNAME"
+  fi
+}
+
+register sudo_nopasswd "Passwordless sudo" "sudo without password prompts" 1 system \
+  install_sudo_nopasswd check_sudo_nopasswd
+
 # ─── docker ────────────────────────────────────────────────
 install_docker() {
   install -m 0755 -d /etc/apt/keyrings
@@ -412,7 +461,7 @@ install_docker() {
   apt-get install -y \
     docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin
-  usermod -aG docker "$USERNAME"
+  add_docker_group_if_needed
 }
 
 check_docker() {
@@ -425,10 +474,12 @@ check_docker() {
   else
     ko "docker daemon not running"
   fi
-  if id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-    ok "$USERNAME in docker group"
-  else
-    ko "$USERNAME not in docker group"
+  if [[ "$USERNAME" != "root" ]]; then
+    if id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+      ok "$USERNAME in docker group"
+    else
+      ko "$USERNAME not in docker group"
+    fi
   fi
 }
 
@@ -628,12 +679,41 @@ register hermes "Hermes" "NousResearch AI agent" 1 user install_hermes check_her
 # Baseline (mandatory, ordered) — NOT registered, always run
 # ════════════════════════════════════════════════════════════════════════════
 
+install_apt_lock_timeout() {
+  local config_dir candidate=""
+  config_dir=$(dirname "$APT_LOCK_CONFIG")
+  if ! install -d -m 0755 "$config_dir"; then
+    rm -f "$APT_LOCK_CONFIG"
+    return 1
+  fi
+  if ! candidate=$(mktemp "$config_dir/.vps-boot-apt.XXXXXX"); then
+    rm -f "$APT_LOCK_CONFIG"
+    return 1
+  fi
+  if ! printf 'DPkg::Lock::Timeout "%s";\n' "$APT_LOCK_TIMEOUT" > "$candidate"; then
+    rm -f "$candidate" "$APT_LOCK_CONFIG"
+    return 1
+  fi
+  if ! chmod 0644 "$candidate"; then
+    rm -f "$candidate" "$APT_LOCK_CONFIG"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$APT_LOCK_CONFIG"; then
+    rm -f "$candidate" "$APT_LOCK_CONFIG"
+    return 1
+  fi
+}
+
+remove_apt_lock_timeout() {
+  rm -f "$APT_LOCK_CONFIG"
+}
+
 bl_update() {
   apt-get update -y
   apt-get upgrade -y
   apt-get install -y \
     wget gnupg lsb-release ca-certificates \
-    software-properties-common ufw fail2ban git unzip curl
+    software-properties-common ufw fail2ban git unzip curl sudo
 }
 
 bl_user() {
@@ -651,24 +731,200 @@ bl_ufw() {
   ufw --force enable
 }
 
-# set_sshd <key> <value> — patches sshd_config in place (idempotent)
-set_sshd() {
-  local k=$1 v=$2
-  local cfg=/etc/ssh/sshd_config
-  if grep -qE "^[#[:space:]]*${k}\b" "$cfg"; then
-    sed -i -E "s|^[#[:space:]]*${k}.*|${k} ${v}|" "$cfg"
-  else
-    echo "${k} ${v}" >> "$cfg"
+write_sshd_dropin() {
+  local permit_root=$1 password_auth=$2 kbd_auth=$3
+  local candidate
+  install -d -m 0755 "$(dirname "$SSHD_DROPIN")"
+  candidate=$(mktemp "$(dirname "$SSHD_DROPIN")/.vps-boot-sshd.XXXXXX")
+  if ! cat > "$candidate" <<EOF
+# Managed by vps-boot
+Port $SSH_PORT
+PermitRootLogin $permit_root
+PasswordAuthentication $password_auth
+KbdInteractiveAuthentication $kbd_auth
+EOF
+  then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! chmod 0644 "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$SSHD_DROPIN"; then
+    rm -f "$candidate"
+    return 1
   fi
 }
 
-bl_ssh_harden() {
-  local cfg=/etc/ssh/sshd_config
-  cp "$cfg" "${cfg}.bak.$(date +%s)"
+lockdown_ssh() {
+  local permit_root=no
+  [[ "$USERNAME" == "root" ]] && permit_root=prohibit-password
+  apply_sshd_policy "$permit_root" no no 1
+}
 
-  set_sshd Port                   "$SSH_PORT"
-  set_sshd PermitRootLogin        "no"
-  set_sshd PasswordAuthentication "yes"   # flipped to no after key enrollment
+sshd_effective_config() {
+  local context_user=${1:-$USERNAME}
+  sshd -T -f "$SSHD_CONFIG" \
+    -C "user=$context_user,host=localhost,addr=127.0.0.1" 2>/dev/null
+}
+
+sshd_effective_value() {
+  local key=${1,,} context_user=${2:-$USERNAME}
+  sshd_effective_config "$context_user" \
+    | awk -v wanted="$key" '$1 == wanted { print $2; exit }'
+}
+
+sshd_root_is_key_only() {
+  [[ "$1" == "prohibit-password" || "$1" == "without-password" ]]
+}
+
+sshd_root_matches_policy() {
+  local actual=$1 expected=$2
+  case "$expected" in
+    prohibit-password|without-password)
+      sshd_root_is_key_only "$actual"
+      ;;
+    *)
+      [[ "$actual" == "$expected" ]]
+      ;;
+  esac
+}
+
+validate_sshd_listeners() {
+  local effective=$1 entry address port
+  local found_listener=0 found_remote=0
+
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    found_listener=1
+    if [[ "$entry" =~ ^\[([^]]+)\]:([0-9]+)$ ]]; then
+      address=${BASH_REMATCH[1]}
+      port=${BASH_REMATCH[2]}
+    elif [[ "$entry" =~ ^([^:]+):([0-9]+)$ ]]; then
+      address=${BASH_REMATCH[1]}
+      port=${BASH_REMATCH[2]}
+    else
+      printf 'ERROR: cannot parse effective SSH ListenAddress: %s\n' "$entry" >&2
+      return 1
+    fi
+
+    if [[ "$port" != "$SSH_PORT" ]]; then
+      printf 'ERROR: effective SSH ListenAddress uses unexpected port: %s\n' "$entry" >&2
+      return 1
+    fi
+
+    case "${address,,}" in
+      127.*|::1|0:0:0:0:0:0:0:1|::ffff:127.*|0:0:0:0:0:ffff:127.*)
+        ;;
+      *)
+        found_remote=1
+        ;;
+    esac
+  done < <(awk '$1 == "listenaddress" { print $2 }' <<< "$effective")
+
+  if (( ! found_listener )); then
+    printf 'ERROR: effective SSH configuration has no ListenAddress\n' >&2
+    return 1
+  fi
+  if (( ! found_remote )); then
+    printf 'ERROR: effective SSH listeners are loopback-only on port %s\n' "$SSH_PORT" >&2
+    return 1
+  fi
+}
+
+validate_sshd_policy() {
+  local expected_root=$1 expected_password=$2 expected_kbd=$3
+  local effective root_effective actual_root actual_password actual_kbd
+  local -a ports=()
+
+  sshd -t -f "$SSHD_CONFIG" || return 1
+  effective=$(sshd_effective_config "$USERNAME") || return 1
+  if [[ "$USERNAME" == "root" ]]; then
+    root_effective=$effective
+  else
+    root_effective=$(sshd_effective_config root) || return 1
+  fi
+  mapfile -t ports < <(awk '$1 == "port" { print $2 }' <<< "$effective")
+  if (( ${#ports[@]} != 1 )) || [[ "${ports[0]:-}" != "$SSH_PORT" ]]; then
+    printf 'ERROR: effective SSH ports must be exactly: %s\n' "$SSH_PORT" >&2
+    return 1
+  fi
+  validate_sshd_listeners "$effective" || return 1
+
+  actual_root=$(awk '$1 == "permitrootlogin" { print $2; exit }' <<< "$root_effective")
+  actual_password=$(awk '$1 == "passwordauthentication" { print $2; exit }' <<< "$effective")
+  actual_kbd=$(awk '$1 == "kbdinteractiveauthentication" { print $2; exit }' <<< "$effective")
+
+  if ! sshd_root_matches_policy "$actual_root" "$expected_root"; then
+    printf 'ERROR: effective PermitRootLogin is %s, expected %s\n' \
+      "${actual_root:-unset}" "$expected_root" >&2
+    return 1
+  fi
+  if [[ "$actual_password" != "$expected_password" ]]; then
+    printf 'ERROR: effective PasswordAuthentication is %s, expected %s\n' \
+      "${actual_password:-unset}" "$expected_password" >&2
+    return 1
+  fi
+  if [[ "$actual_kbd" != "$expected_kbd" ]]; then
+    printf 'ERROR: effective KbdInteractiveAuthentication is %s, expected %s\n' \
+      "${actual_kbd:-unset}" "$expected_kbd" >&2
+    return 1
+  fi
+}
+
+restore_sshd_dropin() {
+  local backup=$1 had_previous=$2
+  if (( had_previous )); then
+    mv -f "$backup" "$SSHD_DROPIN"
+  else
+    rm -f "$SSHD_DROPIN" "$backup"
+  fi
+}
+
+apply_sshd_policy() {
+  local permit_root=$1 password_auth=$2 kbd_auth=$3 reload_service=${4:-0}
+  local config_dir backup="" had_previous=0
+  config_dir=$(dirname "$SSHD_DROPIN")
+  install -d -m 0755 "$config_dir"
+
+  if [[ -e "$SSHD_DROPIN" ]]; then
+    had_previous=1
+    backup=$(mktemp "$config_dir/.vps-boot-sshd-backup.XXXXXX")
+    if ! cp -p "$SSHD_DROPIN" "$backup"; then
+      rm -f "$backup"
+      return 1
+    fi
+  fi
+
+  if ! write_sshd_dropin "$permit_root" "$password_auth" "$kbd_auth"; then
+    rm -f "$backup"
+    return 1
+  fi
+  if ! validate_sshd_policy "$permit_root" "$password_auth" "$kbd_auth"; then
+    restore_sshd_dropin "$backup" "$had_previous" || return 1
+    return 1
+  fi
+
+  if (( reload_service )) && ! systemctl reload ssh.service; then
+    restore_sshd_dropin "$backup" "$had_previous" || return 1
+    if sshd -t -f "$SSHD_CONFIG"; then
+      systemctl reload ssh.service || true
+    fi
+    return 1
+  fi
+
+  rm -f "$backup"
+}
+
+bl_ssh_harden() {
+  local permit_root=no
+  cp "$SSHD_CONFIG" "${SSHD_CONFIG}.bak.$(date +%s)"
+
+  if [[ "$USERNAME" == "root" ]]; then
+    permit_root=yes
+  fi
+  apply_sshd_policy "$permit_root" yes yes 0
 
   # Make ssh.service the canonical listener. Mask ssh.socket so it can't
   # auto-bind :22 on reboot or after an openssh-server upgrade.
@@ -681,7 +937,6 @@ bl_ssh_harden() {
   systemctl enable ssh.service 2>/dev/null || true
   systemctl daemon-reload
 
-  sshd -t
   # KillMode=process leaves orphan sshd listeners on the old port; pkill them.
   # User sessions are forked children, not [listener] masters, so they survive.
   systemctl stop ssh.service 2>/dev/null || true
@@ -763,9 +1018,7 @@ enroll_ssh_key() {
       chown -R "$USERNAME:$USERNAME" "$user_home/.ssh"
       chmod 700 "$user_home/.ssh"
       chmod 600 "$auth_keys"
-      sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-      sshd -t
-      # ssh@.service re-reads sshd_config per connection; restarting would clash with ssh.socket's listener.
+      lockdown_ssh
       ;;
     skip)
       # nothing to do — verifier will surface the "password auth still on" warning
@@ -777,6 +1030,33 @@ enroll_ssh_key() {
 # ════════════════════════════════════════════════════════════════════════════
 # Validation
 # ════════════════════════════════════════════════════════════════════════════
+
+configure_user_mode() {
+  case "$1" in
+    skip)
+      CREATE_USER=0
+      USERNAME=root
+      USER_PASSWORD=""
+      ;;
+    create)
+      CREATE_USER=1
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
+component_is_applicable() {
+  local key=$1
+  [[ "$key" != "sudo_nopasswd" || "$USERNAME" != "root" ]]
+}
+
+add_docker_group_if_needed() {
+  if [[ "$USERNAME" != "root" ]]; then
+    usermod -aG docker "$USERNAME"
+  fi
+}
 
 valid_username() {
   [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
@@ -808,27 +1088,37 @@ cmd_install() {
   banner
 
   section "About"
-  body "vps-boot will create a sudo user, harden SSH, set up UFW + fail2ban,"
-  body "and install your selected dev tools. Takes ~3 min on a fresh Ubuntu LTS."
+  body "vps-boot will harden SSH, set up UFW + fail2ban, and install your"
+  body "selected dev tools. Run as root (default) or create a sudo user."
   rail
 
-  # ── username ──
-  while :; do
-    prompt_text "Username" USERNAME "$arg_user"
-    if ! valid_username "$USERNAME"; then
-      printf '%s│%s  %s! invalid username — must match [a-z_][a-z0-9_-]{0,31}%s\n' \
-        "$C_DIM" "$C_RESET" "$C_YELLOW" "$C_RESET"
-      arg_user=""
-      continue
-    fi
-    if id "$USERNAME" &>/dev/null; then
-      printf '%s│%s  %s! user %s already exists — pick another%s\n' \
-        "$C_DIM" "$C_RESET" "$C_YELLOW" "$USERNAME" "$C_RESET"
-      arg_user=""
-      continue
-    fi
-    break
-  done
+  # ── user account ──
+  local user_mode
+  prompt_radio "User account" user_mode \
+    "skip|run everything as root (best for autonomous AI environments)" \
+    "create|create a sudo user"
+  configure_user_mode "$user_mode"
+
+  if (( CREATE_USER )); then
+    while :; do
+      prompt_text "Username" USERNAME "$arg_user"
+      if ! valid_username "$USERNAME"; then
+        printf '%s│%s  %s! invalid username — must match [a-z_][a-z0-9_-]{0,31}%s\n' \
+          "$C_DIM" "$C_RESET" "$C_YELLOW" "$C_RESET"
+        arg_user=""
+        continue
+      fi
+      if id "$USERNAME" &>/dev/null; then
+        printf '%s│%s  %s! user %s already exists — pick another%s\n' \
+          "$C_DIM" "$C_RESET" "$C_YELLOW" "$USERNAME" "$C_RESET"
+        arg_user=""
+        continue
+      fi
+      break
+    done
+
+    prompt_password "Password for $USERNAME" USER_PASSWORD
+  fi
 
   # ── port ──
   local port_default=${arg_port:-$(random_port)}
@@ -847,9 +1137,6 @@ cmd_install() {
     break
   done
 
-  # ── password ──
-  prompt_password "Password for $USERNAME" USER_PASSWORD
-
   # ── install mode ──
   local mode
   prompt_radio "Install mode" mode \
@@ -862,6 +1149,7 @@ cmd_install() {
     local -a msel_args=()
     local key
     for key in "${COMPONENTS[@]}"; do
+      component_is_applicable "$key" || continue
       msel_args+=("${key}|${COMPONENT_NAME[$key]}|${COMPONENT_DESC[$key]}|${COMPONENT_DEFAULT[$key]}")
     done
     prompt_multiselect "Components" "${msel_args[@]}"
@@ -870,14 +1158,20 @@ cmd_install() {
     # QuickStart — all defaults
     local key
     for key in "${COMPONENTS[@]}"; do
+      component_is_applicable "$key" || continue
       [[ "${COMPONENT_DEFAULT[$key]}" == "1" ]] && enabled+=("$key")
     done
   fi
 
   # ── confirm ──
   section "Confirm"
-  body "${C_BOLD}user${C_RESET}      $USERNAME (sudo${enabled[*]+ · docker if selected})"
-  body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login off"
+  if (( CREATE_USER )); then
+    body "${C_BOLD}user${C_RESET}      $USERNAME (sudo · docker group if selected)"
+    body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login off"
+  else
+    body "${C_BOLD}user${C_RESET}      root (no sudo user)"
+    body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login on until key lockdown"
+  fi
   body "${C_BOLD}firewall${C_RESET}  UFW — only $SSH_PORT/tcp open"
   if (( ${#enabled[@]} == 0 )); then
     body "${C_BOLD}install${C_RESET}   ${C_DIM}(none — baseline only)${C_RESET}"
@@ -901,6 +1195,9 @@ cmd_install() {
     die "Aborted by user."
   fi
 
+  trap remove_apt_lock_timeout EXIT
+  install_apt_lock_timeout
+
   # ════════════════════════════════════════════════════════════════════
   # Run phase
   # ════════════════════════════════════════════════════════════════════
@@ -909,7 +1206,9 @@ cmd_install() {
   export DEBIAN_FRONTEND=noninteractive
 
   step_run "System update"               bl_update
-  step_run "User $USERNAME"              bl_user
+  if (( CREATE_USER )); then
+    step_run "User $USERNAME"            bl_user
+  fi
   step_run "Firewall (UFW)"              bl_ufw
   step_run "SSH hardening"               bl_ssh_harden
   step_run "fail2ban"                    bl_fail2ban
@@ -937,6 +1236,8 @@ cmd_install() {
 
   ENABLED_COMPONENTS=("${enabled[@]}")
   do_check
+  remove_apt_lock_timeout
+  trap - EXIT
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -945,9 +1246,8 @@ cmd_install() {
 
 cmd_check() {
   [[ $EUID -eq 0 ]] || die "Must run as root."
-  USERNAME=${1:-}
+  USERNAME=${1:-root}
   SSH_PORT=${2:-1986}
-  [[ -n "$USERNAME" ]] || die "Usage: $0 check <username> [ssh_port]"
   id "$USERNAME" &>/dev/null || die "User '$USERNAME' does not exist."
   valid_port "$SSH_PORT" || die "Invalid SSH port: $SSH_PORT"
 
@@ -958,12 +1258,19 @@ cmd_check() {
     local -a filtered=()
     local k
     for k in "${ENABLED_COMPONENTS[@]}"; do
-      [[ -n "$k" ]] && filtered+=("$k")
+      [[ -n "$k" ]] || continue
+      component_is_applicable "$k" || continue
+      filtered+=("$k")
     done
     ENABLED_COMPONENTS=("${filtered[@]}")
   else
     # no state — check every registered component
-    ENABLED_COMPONENTS=("${COMPONENTS[@]}")
+    ENABLED_COMPONENTS=()
+    local k
+    for k in "${COMPONENTS[@]}"; do
+      component_is_applicable "$k" || continue
+      ENABLED_COMPONENTS+=("$k")
+    done
   fi
   do_check
 }
@@ -974,7 +1281,9 @@ do_check() {
   section "Verify"
 
   # ── user ──
-  if id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx sudo; then
+  if [[ "$USERNAME" == "root" ]]; then
+    ok "root account selected (no sudo user)"
+  elif id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx sudo; then
     ok "$USERNAME in sudo group"
   else
     ko "$USERNAME not in sudo group"
@@ -1001,7 +1310,15 @@ do_check() {
   else
     ok "port 22 closed"
   fi
-  if grep -qE '^[[:space:]]*PermitRootLogin[[:space:]]+no\b' /etc/ssh/sshd_config; then
+  local permit_root
+  permit_root=$(sshd_effective_value permitrootlogin || true)
+  if [[ "$USERNAME" == "root" ]]; then
+    if sshd_root_is_key_only "$permit_root"; then
+      ok "root login restricted to SSH keys"
+    else
+      note "root password login still enabled"
+    fi
+  elif [[ "$permit_root" == "no" ]]; then
     ok "root login disabled"
   else
     ko "PermitRootLogin not 'no'"
@@ -1021,10 +1338,13 @@ do_check() {
   else
     ko "sshd config invalid"
   fi
-  local pa
-  pa=$(grep -E '^[[:space:]]*PasswordAuthentication[[:space:]]+' /etc/ssh/sshd_config | awk '{print $2}' | tail -1)
-  if [[ "$pa" == "no" ]]; then
+  local pa kbd
+  pa=$(sshd_effective_value passwordauthentication || true)
+  kbd=$(sshd_effective_value kbdinteractiveauthentication || true)
+  if [[ "$pa" == "no" && "$kbd" == "no" ]]; then
     ok "password auth disabled"
+  elif [[ "$pa" != "$kbd" ]]; then
+    ko "password authentication methods disagree (password=$pa, keyboard-interactive=$kbd)"
   else
     note "password auth still enabled"
   fi
@@ -1098,7 +1418,9 @@ do_check() {
     done
   fi
 
-  body "${C_DIM}Note: docker group membership requires a fresh login.${C_RESET}"
+  if [[ "$USERNAME" != "root" && " ${ENABLED_COMPONENTS[*]} " == *" docker "* ]]; then
+    body "${C_DIM}Note: docker group membership requires a fresh login.${C_RESET}"
+  fi
   printf '\n'
 
   (( FAIL == 0 )) || exit 1
@@ -1118,10 +1440,10 @@ ${C_BOLD}USAGE${C_RESET}
   sudo $0 --help
 
 ${C_BOLD}COMMANDS${C_RESET}
-  install   Run the interactive wizard, harden the box, install tools.
-            Args (optional) pre-fill the username and SSH port prompts.
+  install   Run the interactive wizard as root (default) or create a sudo user.
+            Args (optional) pre-fill the created username and SSH port prompts.
   check     Re-run the verifier on an existing vps-boot install.
-            Args required: username and SSH port to check.
+            Args (optional) default to root and SSH port 1986.
 
 ${C_BOLD}REMOTE${C_RESET}
   curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh \\
@@ -1150,4 +1472,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+  main "$@"
+fi
