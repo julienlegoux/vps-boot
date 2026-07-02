@@ -399,6 +399,55 @@ EOF
   [[ ! -e $systemctl_log ]]
 }
 
+test_sshd_root_match_override_restores_previous_dropin() {
+  local before systemctl_log="$TEST_ROOT/systemctl-root-match-override"
+  reset_real_sshd_fixture || return 1
+  cat >> "$VPS_BOOT_SSHD_CONFIG" <<'EOF'
+Match User root
+  PermitRootLogin yes
+EOF
+  write_previous_sshd_dropin || return 1
+  before=$(cat "$VPS_BOOT_SSHD_DROPIN")
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+  SSH_PORT=2222
+  USERNAME=alice
+
+  ! lockdown_ssh >/dev/null 2>&1 || return 1
+  [[ $(cat "$VPS_BOOT_SSHD_DROPIN") == "$before" ]] || return 1
+  [[ ! -e $systemctl_log ]]
+}
+
+test_sshd_unexpected_listen_port_restores_previous_dropin() {
+  local before systemctl_log="$TEST_ROOT/systemctl-listen-port"
+  reset_real_sshd_fixture || return 1
+  sed -i "/^HostKey/i ListenAddress 0.0.0.0:3333" "$VPS_BOOT_SSHD_CONFIG"
+  write_previous_sshd_dropin || return 1
+  before=$(cat "$VPS_BOOT_SSHD_DROPIN")
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+  SSH_PORT=2222
+  USERNAME=alice
+
+  ! lockdown_ssh >/dev/null 2>&1 || return 1
+  [[ $(cat "$VPS_BOOT_SSHD_DROPIN") == "$before" ]] || return 1
+  [[ ! -e $systemctl_log ]]
+}
+
+test_sshd_loopback_only_listeners_restore_previous_dropin() {
+  local before systemctl_log="$TEST_ROOT/systemctl-loopback-listeners"
+  reset_real_sshd_fixture || return 1
+  sed -i "/^HostKey/i ListenAddress 127.0.0.1:2222\nListenAddress [::1]:2222" \
+    "$VPS_BOOT_SSHD_CONFIG"
+  write_previous_sshd_dropin || return 1
+  before=$(cat "$VPS_BOOT_SSHD_DROPIN")
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+  SSH_PORT=2222
+  USERNAME=alice
+
+  ! lockdown_ssh >/dev/null 2>&1 || return 1
+  [[ $(cat "$VPS_BOOT_SSHD_DROPIN") == "$before" ]] || return 1
+  [[ ! -e $systemctl_log ]]
+}
+
 test_sshd_extra_port_restores_previous_dropin() {
   local before systemctl_log="$TEST_ROOT/systemctl-extra-port"
   reset_real_sshd_fixture || return 1
@@ -471,6 +520,8 @@ test_lockdown_disables_password_methods_and_reloads() {
     if [[ $1 == -T ]]; then
       printf '%s\n' \
         'port 2222' \
+        'listenaddress [::]:2222' \
+        'listenaddress 0.0.0.0:2222' \
         'permitrootlogin no' \
         'passwordauthentication no' \
         'kbdinteractiveauthentication no'
@@ -534,6 +585,8 @@ test_root_lockdown_is_key_only() {
     if [[ $1 == -T ]]; then
       printf '%s\n' \
         'port 2222' \
+        'listenaddress [::]:2222' \
+        'listenaddress 0.0.0.0:2222' \
         'permitrootlogin without-password' \
         'passwordauthentication no' \
         'kbdinteractiveauthentication no'
@@ -591,6 +644,9 @@ run_test "passwordless sudo cleans candidate after chmod failure" test_sudo_nopa
 run_test "SSH drop-in has one value per managed key" test_sshd_dropin_has_single_managed_values
 run_test "SSH syntax failure restores previous drop-in" test_sshd_syntax_failure_restores_previous_dropin
 run_test "SSH Match override restores previous drop-in" test_sshd_match_override_restores_previous_dropin
+run_test "SSH root Match override restores previous drop-in" test_sshd_root_match_override_restores_previous_dropin
+run_test "SSH unexpected ListenAddress port restores previous drop-in" test_sshd_unexpected_listen_port_restores_previous_dropin
+run_test "SSH loopback-only listeners restore previous drop-in" test_sshd_loopback_only_listeners_restore_previous_dropin
 run_test "SSH extra port restores previous drop-in" test_sshd_extra_port_restores_previous_dropin
 run_test "valid SSH policy commits and reloads" test_valid_sshd_policy_commits_and_reloads
 run_test "SSH reload failure restores previous policy" test_sshd_reload_failure_restores_and_reloads_previous_policy

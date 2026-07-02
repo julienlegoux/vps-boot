@@ -764,13 +764,15 @@ lockdown_ssh() {
 }
 
 sshd_effective_config() {
+  local context_user=${1:-$USERNAME}
   sshd -T -f "$SSHD_CONFIG" \
-    -C "user=$USERNAME,host=localhost,addr=127.0.0.1" 2>/dev/null
+    -C "user=$context_user,host=localhost,addr=127.0.0.1" 2>/dev/null
 }
 
 sshd_effective_value() {
-  local key=${1,,}
-  sshd_effective_config | awk -v wanted="$key" '$1 == wanted { print $2; exit }'
+  local key=${1,,} context_user=${2:-$USERNAME}
+  sshd_effective_config "$context_user" \
+    | awk -v wanted="$key" '$1 == wanted { print $2; exit }'
 }
 
 sshd_root_is_key_only() {
@@ -789,20 +791,68 @@ sshd_root_matches_policy() {
   esac
 }
 
+validate_sshd_listeners() {
+  local effective=$1 entry address port
+  local found_listener=0 found_remote=0
+
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    found_listener=1
+    if [[ "$entry" =~ ^\[([^]]+)\]:([0-9]+)$ ]]; then
+      address=${BASH_REMATCH[1]}
+      port=${BASH_REMATCH[2]}
+    elif [[ "$entry" =~ ^([^:]+):([0-9]+)$ ]]; then
+      address=${BASH_REMATCH[1]}
+      port=${BASH_REMATCH[2]}
+    else
+      printf 'ERROR: cannot parse effective SSH ListenAddress: %s\n' "$entry" >&2
+      return 1
+    fi
+
+    if [[ "$port" != "$SSH_PORT" ]]; then
+      printf 'ERROR: effective SSH ListenAddress uses unexpected port: %s\n' "$entry" >&2
+      return 1
+    fi
+
+    case "${address,,}" in
+      127.*|::1|0:0:0:0:0:0:0:1|::ffff:127.*|0:0:0:0:0:ffff:127.*)
+        ;;
+      *)
+        found_remote=1
+        ;;
+    esac
+  done < <(awk '$1 == "listenaddress" { print $2 }' <<< "$effective")
+
+  if (( ! found_listener )); then
+    printf 'ERROR: effective SSH configuration has no ListenAddress\n' >&2
+    return 1
+  fi
+  if (( ! found_remote )); then
+    printf 'ERROR: effective SSH listeners are loopback-only on port %s\n' "$SSH_PORT" >&2
+    return 1
+  fi
+}
+
 validate_sshd_policy() {
   local expected_root=$1 expected_password=$2 expected_kbd=$3
-  local effective actual_root actual_password actual_kbd
+  local effective root_effective actual_root actual_password actual_kbd
   local -a ports=()
 
   sshd -t -f "$SSHD_CONFIG" || return 1
-  effective=$(sshd_effective_config) || return 1
+  effective=$(sshd_effective_config "$USERNAME") || return 1
+  if [[ "$USERNAME" == "root" ]]; then
+    root_effective=$effective
+  else
+    root_effective=$(sshd_effective_config root) || return 1
+  fi
   mapfile -t ports < <(awk '$1 == "port" { print $2 }' <<< "$effective")
   if (( ${#ports[@]} != 1 )) || [[ "${ports[0]:-}" != "$SSH_PORT" ]]; then
     printf 'ERROR: effective SSH ports must be exactly: %s\n' "$SSH_PORT" >&2
     return 1
   fi
+  validate_sshd_listeners "$effective" || return 1
 
-  actual_root=$(awk '$1 == "permitrootlogin" { print $2; exit }' <<< "$effective")
+  actual_root=$(awk '$1 == "permitrootlogin" { print $2; exit }' <<< "$root_effective")
   actual_password=$(awk '$1 == "passwordauthentication" { print $2; exit }' <<< "$effective")
   actual_kbd=$(awk '$1 == "kbdinteractiveauthentication" { print $2; exit }' <<< "$effective")
 
