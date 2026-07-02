@@ -21,7 +21,7 @@ readonly APT_LOCK_CONFIG="${VPS_BOOT_APT_LOCK_CONFIG:-/etc/apt/apt.conf.d/99-vps
 readonly SUDOERS_DIR="${VPS_BOOT_SUDOERS_DIR:-/etc/sudoers.d}"
 readonly SSHD_CONFIG="${VPS_BOOT_SSHD_CONFIG:-/etc/ssh/sshd_config}"
 readonly SSHD_DROPIN="${VPS_BOOT_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-vps-boot.conf}"
-readonly STATE_DIR="/etc/vps-boot"
+readonly STATE_DIR="${VPS_BOOT_STATE_DIR:-/etc/vps-boot}"
 readonly STATE_FILE="$STATE_DIR/components"
 
 # ANSI colors — disabled if stdout isn't a tty
@@ -680,9 +680,28 @@ register hermes "Hermes" "NousResearch AI agent" 1 user install_hermes check_her
 # ════════════════════════════════════════════════════════════════════════════
 
 install_apt_lock_timeout() {
-  install -d -m 0755 "$(dirname "$APT_LOCK_CONFIG")"
-  printf 'DPkg::Lock::Timeout "%s";\n' "$APT_LOCK_TIMEOUT" > "$APT_LOCK_CONFIG"
-  chmod 0644 "$APT_LOCK_CONFIG"
+  local config_dir candidate=""
+  config_dir=$(dirname "$APT_LOCK_CONFIG")
+  if ! install -d -m 0755 "$config_dir"; then
+    rm -f "$APT_LOCK_CONFIG"
+    return 1
+  fi
+  if ! candidate=$(mktemp "$config_dir/.vps-boot-apt.XXXXXX"); then
+    rm -f "$APT_LOCK_CONFIG"
+    return 1
+  fi
+  if ! printf 'DPkg::Lock::Timeout "%s";\n' "$APT_LOCK_TIMEOUT" > "$candidate"; then
+    rm -f "$candidate" "$APT_LOCK_CONFIG"
+    return 1
+  fi
+  if ! chmod 0644 "$candidate"; then
+    rm -f "$candidate" "$APT_LOCK_CONFIG"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$APT_LOCK_CONFIG"; then
+    rm -f "$candidate" "$APT_LOCK_CONFIG"
+    return 1
+  fi
 }
 
 remove_apt_lock_timeout() {
@@ -741,19 +760,111 @@ EOF
 lockdown_ssh() {
   local permit_root=no
   [[ "$USERNAME" == "root" ]] && permit_root=prohibit-password
-  write_sshd_dropin "$permit_root" no no || return 1
-  sshd -t || return 1
-  systemctl reload ssh.service
+  apply_sshd_policy "$permit_root" no no 1
+}
+
+sshd_effective_config() {
+  sshd -T -f "$SSHD_CONFIG" \
+    -C "user=$USERNAME,host=localhost,addr=127.0.0.1" 2>/dev/null
 }
 
 sshd_effective_value() {
   local key=${1,,}
-  sshd -T -C "user=$USERNAME,host=localhost,addr=127.0.0.1" 2>/dev/null \
-    | awk -v wanted="$key" '$1 == wanted { print $2; exit }'
+  sshd_effective_config | awk -v wanted="$key" '$1 == wanted { print $2; exit }'
 }
 
 sshd_root_is_key_only() {
   [[ "$1" == "prohibit-password" || "$1" == "without-password" ]]
+}
+
+sshd_root_matches_policy() {
+  local actual=$1 expected=$2
+  case "$expected" in
+    prohibit-password|without-password)
+      sshd_root_is_key_only "$actual"
+      ;;
+    *)
+      [[ "$actual" == "$expected" ]]
+      ;;
+  esac
+}
+
+validate_sshd_policy() {
+  local expected_root=$1 expected_password=$2 expected_kbd=$3
+  local effective actual_root actual_password actual_kbd
+  local -a ports=()
+
+  sshd -t -f "$SSHD_CONFIG" || return 1
+  effective=$(sshd_effective_config) || return 1
+  mapfile -t ports < <(awk '$1 == "port" { print $2 }' <<< "$effective")
+  if (( ${#ports[@]} != 1 )) || [[ "${ports[0]:-}" != "$SSH_PORT" ]]; then
+    printf 'ERROR: effective SSH ports must be exactly: %s\n' "$SSH_PORT" >&2
+    return 1
+  fi
+
+  actual_root=$(awk '$1 == "permitrootlogin" { print $2; exit }' <<< "$effective")
+  actual_password=$(awk '$1 == "passwordauthentication" { print $2; exit }' <<< "$effective")
+  actual_kbd=$(awk '$1 == "kbdinteractiveauthentication" { print $2; exit }' <<< "$effective")
+
+  if ! sshd_root_matches_policy "$actual_root" "$expected_root"; then
+    printf 'ERROR: effective PermitRootLogin is %s, expected %s\n' \
+      "${actual_root:-unset}" "$expected_root" >&2
+    return 1
+  fi
+  if [[ "$actual_password" != "$expected_password" ]]; then
+    printf 'ERROR: effective PasswordAuthentication is %s, expected %s\n' \
+      "${actual_password:-unset}" "$expected_password" >&2
+    return 1
+  fi
+  if [[ "$actual_kbd" != "$expected_kbd" ]]; then
+    printf 'ERROR: effective KbdInteractiveAuthentication is %s, expected %s\n' \
+      "${actual_kbd:-unset}" "$expected_kbd" >&2
+    return 1
+  fi
+}
+
+restore_sshd_dropin() {
+  local backup=$1 had_previous=$2
+  if (( had_previous )); then
+    mv -f "$backup" "$SSHD_DROPIN"
+  else
+    rm -f "$SSHD_DROPIN" "$backup"
+  fi
+}
+
+apply_sshd_policy() {
+  local permit_root=$1 password_auth=$2 kbd_auth=$3 reload_service=${4:-0}
+  local config_dir backup="" had_previous=0
+  config_dir=$(dirname "$SSHD_DROPIN")
+  install -d -m 0755 "$config_dir"
+
+  if [[ -e "$SSHD_DROPIN" ]]; then
+    had_previous=1
+    backup=$(mktemp "$config_dir/.vps-boot-sshd-backup.XXXXXX")
+    if ! cp -p "$SSHD_DROPIN" "$backup"; then
+      rm -f "$backup"
+      return 1
+    fi
+  fi
+
+  if ! write_sshd_dropin "$permit_root" "$password_auth" "$kbd_auth"; then
+    rm -f "$backup"
+    return 1
+  fi
+  if ! validate_sshd_policy "$permit_root" "$password_auth" "$kbd_auth"; then
+    restore_sshd_dropin "$backup" "$had_previous" || return 1
+    return 1
+  fi
+
+  if (( reload_service )) && ! systemctl reload ssh.service; then
+    restore_sshd_dropin "$backup" "$had_previous" || return 1
+    if sshd -t -f "$SSHD_CONFIG"; then
+      systemctl reload ssh.service || true
+    fi
+    return 1
+  fi
+
+  rm -f "$backup"
 }
 
 bl_ssh_harden() {
@@ -763,8 +874,7 @@ bl_ssh_harden() {
   if [[ "$USERNAME" == "root" ]]; then
     permit_root=yes
   fi
-  write_sshd_dropin "$permit_root" yes yes
-  sshd -t
+  apply_sshd_policy "$permit_root" yes yes 0
 
   # Make ssh.service the canonical listener. Mask ssh.socket so it can't
   # auto-bind :22 on reboot or after an openssh-server upgrade.
@@ -1035,8 +1145,8 @@ cmd_install() {
     die "Aborted by user."
   fi
 
-  install_apt_lock_timeout
   trap remove_apt_lock_timeout EXIT
+  install_apt_lock_timeout
 
   # ════════════════════════════════════════════════════════════════════
   # Run phase
@@ -1312,6 +1422,6 @@ main() {
   esac
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "$0" ]]; then
   main "$@"
 fi
