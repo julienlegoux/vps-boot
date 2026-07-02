@@ -671,6 +671,29 @@ run_test "SSH lockdown disables passwords and reloads" test_lockdown_disables_pa
 run_test "invalid SSH config is not reloaded" test_invalid_sshd_config_is_not_reloaded
 ```
 
+Also prove a drop-in write failure cannot fall through under Bash's conditional-command rules:
+
+```bash
+test_lockdown_stops_when_dropin_write_fails() {
+  local sshd_log="$TEST_ROOT/sshd-after-write-failure-log"
+  local systemctl_log="$TEST_ROOT/systemctl-after-write-failure-log"
+  write_sshd_dropin() { return 23; }
+  sshd() { printf '%s\n' "$*" >> "$sshd_log"; }
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+  SSH_PORT=2222
+  USERNAME=alice
+
+  if lockdown_ssh; then
+    return 1
+  fi
+
+  [[ ! -e $sshd_log ]] || return 1
+  [[ ! -e $systemctl_log ]]
+}
+
+run_test "SSH lockdown stops after drop-in write failure" test_lockdown_stops_when_dropin_write_fails
+```
+
 - [ ] **Step 2: Run tests and verify RED**
 
 Expected: failures because the SSH helper functions do not exist.
@@ -724,7 +747,7 @@ Add:
 lockdown_ssh() {
   local permit_root=no
   [[ "$USERNAME" == "root" ]] && permit_root=prohibit-password
-  write_sshd_dropin "$permit_root" no no
+  write_sshd_dropin "$permit_root" no no || return 1
   sshd -t || return 1
   systemctl reload ssh.service
 }
@@ -780,7 +803,7 @@ run_test "root lockdown is key-only" test_root_lockdown_is_key_only
 
 Run syntax checks and full tests.
 
-Expected: `15 passed, 0 failed`; one managed line per SSH key; no reload after failed validation; both password methods disabled; root becomes key-only.
+Expected: `16 passed, 0 failed`; one managed line per SSH key; no reload after failed write or validation; both password methods disabled; root becomes key-only.
 
 - [ ] **Step 8: Commit Task 5**
 
@@ -842,7 +865,7 @@ Update the wizard transcript so `User account` is first and username/password ar
 
 Run syntax checks and full tests.
 
-Expected: `16 passed, 0 failed`.
+Expected: `17 passed, 0 failed`.
 
 - [ ] **Step 5: Commit Task 6**
 
@@ -873,7 +896,7 @@ git commit -m "docs: explain reliable root and sudo setup"
 git diff --check main...HEAD
 ```
 
-Expected: both syntax checks exit 0; all 16 tests pass; `git diff --check` emits nothing.
+Expected: both syntax checks exit 0; all 17 tests pass; `git diff --check` emits nothing.
 
 - [ ] **Step 2: Run ShellCheck when installed**
 
