@@ -30,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 |---|---|
 | System update | `apt update && upgrade` plus base packages; package locks wait up to 180 seconds |
 | User | optional; skipped for the default root-only setup, otherwise creates a password-backed sudo user |
-| Firewall (UFW) | deny incoming; allow only `<your-port>/tcp`; close the default SSH port `:22` |
+| Firewall (UFW) | deny incoming; allow only `<your-port>/tcp`; close the default SSH port `:22` unless you select port 22 |
 | SSH hardening | custom port, managed drop-in, and a timestamped backup of `sshd_config` |
 | fail2ban | sshd jail; 1h ban; 5 retries in 10 minutes |
 
@@ -97,7 +97,7 @@ The verifier reads `/etc/vps-boot/components` when present, so it checks only th
 
 The wizard pauses with copy-pasteable commands for Linux/macOS and Windows, filled with the selected account, VPS IP, and port. Verify the key in a new terminal before choosing `ok`.
 
-When you choose `ok`, vps-boot validates the key, sets `PasswordAuthentication no` and `KbdInteractiveAuthentication no`, validates the resulting sshd configuration, and reloads `ssh.service`. A root-only install keeps root available with keys only (`PermitRootLogin prohibit-password`); an install with a created user disables root login. Choosing `skip` leaves password authentication enabled and the verifier reports a warning.
+Choosing `ok` requests lockdown, but lockdown proceeds only after `authorized_keys` exists and `ssh-keygen` confirms it contains a valid SSH key. Only then does vps-boot set `PasswordAuthentication no` and `KbdInteractiveAuthentication no`, validate the resulting sshd configuration, reload `ssh.service`, and—for a root-only install—change root to key-only access (`PermitRootLogin prohibit-password`). Created-user installs already have root login disabled. A missing or invalid key, or choosing `skip`, leaves password authentication enabled and the verifier reports a warning.
 
 ## Adding a component
 
