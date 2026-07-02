@@ -71,7 +71,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot
 ◇  Continue?       ● Continue     ○ Abort
 ```
 
-APT operations wait up to three minutes for a background package manager to release its lock. The installer then walks you through SSH key enrollment, applies the final SSH lockdown, and prints verification and reconnect details.
+APT operations wait up to three minutes for a background package manager to release its lock. The installer then walks you through SSH key enrollment and prints verification and reconnect details. It applies final SSH lockdown only when you choose `ok` and a valid key exists. Choosing `skip`, or continuing with a missing or invalid key, leaves password authentication enabled.
 
 ### Locally, with the file already on the box
 

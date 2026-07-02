@@ -221,17 +221,25 @@ test_root_lockdown_is_key_only() {
 }
 
 test_readme_documents_new_defaults() {
+  local enrollment_paragraph
+
   grep -q 'root-only' "$ROOT_DIR/README.md" || return 1
   grep -Eq 'QuickStart.*Passwordless sudo.*only when.*create a user' "$ROOT_DIR/README.md" || return 1
   grep -Eq 'Custom.*Passwordless sudo.*checkbox' "$ROOT_DIR/README.md" || return 1
   grep -q 'three minutes' "$ROOT_DIR/README.md" || return 1
+  grep -Eq 'final SSH lockdown.*only when.*choose.*ok.*valid key' "$ROOT_DIR/README.md" || return 1
+  grep -Eq 'Choosing .*skip.*missing or invalid key.*password authentication enabled' "$ROOT_DIR/README.md" || return 1
   grep -q 'PasswordAuthentication no' "$ROOT_DIR/README.md" || return 1
   grep -q 'KbdInteractiveAuthentication no' "$ROOT_DIR/README.md" || return 1
-  grep -Eq 'reload(s|ing)? .*ssh\.service' "$ROOT_DIR/README.md" || return 1
   grep -Fq 'check root <port>' "$ROOT_DIR/README.md" || return 1
   grep -Fq 'check <username> <port>' "$ROOT_DIR/README.md" || return 1
   grep -Eq '(unless|except when).*port 22' "$ROOT_DIR/README.md" || return 1
-  grep -Eq 'only after.*authorized_keys.*valid SSH key' "$ROOT_DIR/README.md"
+
+  # Keep the reload tied to the validated-key enrollment paragraph.
+  enrollment_paragraph=$(awk 'BEGIN { RS="" } /authorized_keys/ && /valid SSH key/ { gsub(/\n/, " "); print; exit }' "$ROOT_DIR/README.md")
+  [[ -n $enrollment_paragraph ]] || return 1
+  grep -Eq 'only after.*authorized_keys.*valid SSH key' <<< "$enrollment_paragraph" || return 1
+  grep -Eq 'Only then.*reload(s|ing)? .*ssh\.service' <<< "$enrollment_paragraph"
 }
 
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
