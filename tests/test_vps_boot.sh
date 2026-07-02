@@ -220,6 +220,13 @@ test_root_lockdown_is_key_only() {
   ! sshd_root_is_key_only yes
 }
 
+test_readme_documents_new_defaults() {
+  grep -q 'root-only' "$ROOT_DIR/README.md" || return 1
+  grep -q 'Passwordless sudo' "$ROOT_DIR/README.md" || return 1
+  grep -q 'three minutes' "$ROOT_DIR/README.md" || return 1
+  grep -q 'KbdInteractiveAuthentication' "$ROOT_DIR/README.md"
+}
+
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
 run_test "step_run stops at the first failure" test_step_run_stops_at_first_failure
 run_test "APT lock timeout fragment is temporary" test_apt_lock_timeout_fragment
@@ -236,6 +243,7 @@ run_test "invalid SSH config is not reloaded" test_invalid_sshd_config_is_not_re
 run_test "SSH lockdown stops after drop-in write failure" test_lockdown_stops_when_dropin_write_fails
 run_test "effective SSH values come from sshd -T" test_sshd_effective_value_reads_sshd_T
 run_test "root lockdown is key-only" test_root_lockdown_is_key_only
+run_test "README documents new defaults" test_readme_documents_new_defaults
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))

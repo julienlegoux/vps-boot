@@ -1,6 +1,6 @@
 # vps-boot
 
-> Single-shot Ubuntu LTS hardening + dev toolchain. One command, an interactive wizard, and your fresh VPS is sudo-user'd, firewalled, fail2banned, and ready to ship code.
+> Single-shot Ubuntu LTS hardening + dev toolchain. One command and an interactive wizard prepare a fresh VPS for root-only automation or an optional sudo user.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh | sudo bash -s install
@@ -16,34 +16,39 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 
 ## Why
 
-- **Hardened by default** — non-root sudo user, UFW with only the right ports open, fail2ban on SSH, root login disabled, custom SSH port, password auth disabled after key enrollment.
-- **Batteries-included dev toolchain** — Docker, GitHub CLI, Node, Bun, Python, Go, Claude Code, Hermes. Pick all of them (QuickStart) or pick your own (Custom).
-- **Modular** — one block per tool. Adding a new component is one `register` line + two functions, in one section. The wizard and the verifier pick it up automatically.
+- **Root-only by default** — skip user creation for autonomous environments without sudo prompts, or create a non-root sudo user when you want one.
+- **Hardened SSH** — UFW exposes only the selected SSH port, fail2ban protects it, and key enrollment finishes by disabling both password authentication methods.
+- **Reliable package setup** — APT waits at most three minutes for background package locks instead of failing immediately during unattended upgrades.
+- **Batteries-included dev toolchain** — choose every default (QuickStart) or select individual components (Custom).
+- **Modular** — the wizard and verifier discover components from the same registry.
 
 ## What you get
 
-### Baseline — always installed, in this order
+### Baseline — applied in this order (user creation is optional)
 
-| Step              | Notes                                                            |
-|-------------------|------------------------------------------------------------------|
-| System update     | `apt update && upgrade` + base packages                          |
-| User              | non-root, `sudo` group, password set non-interactively in wizard |
-| Firewall (UFW)    | deny incoming · allow `<your-port>`/80/443 · default deny `:22`  |
-| SSH hardening     | custom port, root login off, `sshd_config` backed up first       |
-| fail2ban          | sshd jail · 1h ban · 5 retries / 10 min                          |
+| Step | Notes |
+|---|---|
+| System update | `apt update && upgrade` plus base packages; package locks wait up to 180 seconds |
+| User | optional; skipped for the default root-only setup, otherwise creates a password-backed sudo user |
+| Firewall (UFW) | deny incoming; allow only `<your-port>/tcp`; close the default SSH port `:22` |
+| SSH hardening | custom port, managed drop-in, and a timestamped backup of `sshd_config` |
+| fail2ban | sshd jail; 1h ban; 5 retries in 10 minutes |
 
 ### Toolchain — toggleable in Custom mode
 
-| Tool              | What it is                                |
-|-------------------|-------------------------------------------|
-| Docker + Compose  | Docker CE + buildx + compose plugin       |
-| GitHub CLI        | `gh`                                      |
-| Node LTS          | `nvm` + current Node LTS                  |
-| Bun               | the Bun JS runtime                        |
-| Python + pip      | latest Python 3 via the deadsnakes PPA    |
-| Go                | latest Go from go.dev                     |
-| Claude Code       | Anthropic's `claude` CLI                  |
-| Hermes            | NousResearch AI agent                     |
+| Tool | What it is |
+|---|---|
+| Passwordless sudo | `NOPASSWD` sudo rule for a created user; not applicable to root-only installs |
+| Docker + Compose | Docker CE, buildx, and the Compose plugin |
+| GitHub CLI | `gh` |
+| Node LTS | current Node LTS via NodeSource |
+| Bun | JavaScript runtime |
+| Claude Code | Anthropic's `claude` CLI |
+| Python + pip | latest Python 3 via the deadsnakes PPA |
+| Go | latest Go from go.dev |
+| Hermes | NousResearch AI agent |
+
+QuickStart selects all default components. It includes Passwordless sudo only when you create a user. With a created user, Custom shows Passwordless sudo in the same checkbox list as the other components; root-only mode filters it out.
 
 ## Usage
 
@@ -53,41 +58,58 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh | sudo bash -s install
 ```
 
-The wizard asks 4 things (or 5 in Custom mode):
+`User account` is the first prompt and defaults to `skip`. Username and password are requested only when you choose to create a user:
 
-```
-◇  Username        › julien
+```text
+◇  User account    ● skip — run everything as root   ○ create a sudo user
+│  If create:
+◇    Username      › julien
+◇    Password      › ********
 ◇  SSH port        › 47829     (random, editable)
-◇  Password        › ********
 ◇  Install mode    ● QuickStart   ○ Custom
-◇  Components      (Custom only — pick which tools)
-◇  Confirm         ● Continue     ○ Abort
+◇  Components      (Custom only — checkbox list)
+◇  Continue?       ● Continue     ○ Abort
 ```
 
-It runs, walks you through pushing your SSH key, locks down password auth, and prints a summary of what got installed and how to reconnect.
+APT operations wait up to three minutes for a background package manager to release its lock. The installer then walks you through SSH key enrollment, applies the final SSH lockdown, and prints verification and reconnect details.
 
 ### Locally, with the file already on the box
 
 ```bash
-sudo ./vps-boot.sh install              # full wizard
-sudo ./vps-boot.sh install julien       # username pre-filled
-sudo ./vps-boot.sh install julien 2222  # username + port pre-filled
+sudo ./vps-boot.sh install              # full wizard; root-only is the default
+sudo ./vps-boot.sh install julien       # pre-fill username if you choose create
+sudo ./vps-boot.sh install julien 2222  # pre-fill created username and SSH port
 sudo ./vps-boot.sh --help
 ```
 
+### Re-run verification
+
+Use the account and port selected during installation:
+
+```bash
+sudo ./vps-boot.sh check root <port>        # root-only install
+sudo ./vps-boot.sh check <username> <port>  # install with a created user
+```
+
+The verifier reads `/etc/vps-boot/components` when present, so it checks only the components selected during installation.
+
 ## After install — push your SSH key
 
-The wizard pauses and shows you copy-pasteable one-liners for both Linux/macOS and Windows, pre-filled with your real user, IP, and port. Type `ok` to lock down password auth, or `skip` to keep it on and lock down later.
+The wizard pauses with copy-pasteable commands for Linux/macOS and Windows, filled with the selected account, VPS IP, and port. Verify the key in a new terminal before choosing `ok`.
+
+When you choose `ok`, vps-boot validates the key, sets `PasswordAuthentication no` and `KbdInteractiveAuthentication no`, validates the resulting sshd configuration, and reloads `ssh.service`. A root-only install keeps root available with keys only (`PermitRootLogin prohibit-password`); an install with a created user disables root login. Choosing `skip` leaves password authentication enabled and the verifier reports a warning.
 
 ## Adding a component
 
-The toolchain is a registry. Adding a new tool (e.g. `btop`) is three things in one section: an `install_btop` function, a `check_btop` function, and one `register` line. See [`CLAUDE.md`](./.claude/CLAUDE.md) for the contract and a worked example.
+The toolchain is a registry. Adding a new tool (for example, `btop`) requires an install function, a check function, and one `register` line in the Components section. See [`CLAUDE.md`](./.claude/CLAUDE.md) for the contract and a worked example.
 
 ## Recovery
 
-Locked yourself out? Use your provider's web-based root console. The script backs up `/etc/ssh/sshd_config` to `sshd_config.bak.<timestamp>` before editing, so a one-line `cp` restores the previous config.
+Locked yourself out? Open your provider's web-based root console. The installer backs up `/etc/ssh/sshd_config` before editing and writes its settings to `/etc/ssh/sshd_config.d/00-vps-boot.conf`. Restore the backup and remove or correct the managed drop-in, then run `sshd -t` before reloading `ssh.service`.
 
-If the wizard fails mid-install, the last 15 lines of `/tmp/vps-boot.log` are dumped under the failed step. The script aborts on first failure — no half-state recovery in this round, so on a fresh VPS you can usually rebuild the box and re-run.
+After recovery, verify the matching setup with `check root <port>` for root-only or `check <username> <port>` for a created user.
+
+If installation fails, the failed step includes the last 15 lines of `/tmp/vps-boot.log`. The script stops on the first failure; fresh-server re-runs are not supported in this round, so rebuilding the VPS is usually the cleanest recovery.
 
 ## License
 
