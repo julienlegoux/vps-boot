@@ -675,6 +675,23 @@ check_hermes() {
 register hermes "Hermes" "NousResearch AI agent" 1 user install_hermes check_hermes \
   "hermes setup             (configure LLM provider and API keys)"
 
+# ─── tmux ─────────────────────────────────────────────────────────────
+install_tmux() {
+  apt install -y tmux
+}
+
+check_tmux() {
+  if command -v tmux >/dev/null 2>&1; then
+    local v
+    v=$(tmux -V 2>/dev/null | awk '{print $NF}' || echo "?")
+    ok "tmux $v"
+  else
+    ko "tmux not installed"
+  fi
+}
+
+register tmux "tmux" "terminal multiplexer" 1 system install_tmux check_tmux
+
 # ════════════════════════════════════════════════════════════════════════════
 # Baseline (mandatory, ordered) — NOT registered, always run
 # ════════════════════════════════════════════════════════════════════════════
@@ -837,6 +854,12 @@ validate_sshd_policy() {
   local expected_root=$1 expected_password=$2 expected_kbd=$3
   local effective root_effective actual_root actual_password actual_kbd
   local -a ports=()
+
+  # sshd -t refuses to run without this dir. Normally created by
+  # systemd-tmpfiles at boot once ssh.service has started at least once;
+  # a host still on socket-activated ssh (ssh.socket) may never have had
+  # ssh.service start, so it can be missing the first time we get here.
+  install -d -m 0755 /run/sshd
 
   sshd -t -f "$SSHD_CONFIG" || return 1
   effective=$(sshd_effective_config "$USERNAME") || return 1
@@ -1333,6 +1356,7 @@ do_check() {
   else
     ko "ssh.service not active"
   fi
+  install -d -m 0755 /run/sshd
   if sshd -t 2>/dev/null; then
     ok "sshd config valid"
   else
