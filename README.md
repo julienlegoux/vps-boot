@@ -47,6 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | Python + pip | latest Python 3 via the deadsnakes PPA |
 | Go | latest Go from go.dev |
 | Hermes | NousResearch AI agent |
+| tmux | terminal multiplexer |
 
 QuickStart selects all default components. It includes Passwordless sudo only when you create a user. With a created user, Custom shows Passwordless sudo in the same checkbox list as the other components; root-only mode filters it out.
 
