@@ -40,6 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | Tool | What it is |
 |---|---|
 | Passwordless sudo | `NOPASSWD` sudo rule for a created user; not applicable to root-only installs |
+| CLI tools | `jq`, `ripgrep`, `fd`, `htop`, `tree` |
 | Docker + Compose | Docker CE, buildx, and the Compose plugin |
 | GitHub CLI | `gh` |
 | Node LTS | current Node LTS via NodeSource |

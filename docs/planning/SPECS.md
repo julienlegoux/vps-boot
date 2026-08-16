@@ -163,6 +163,7 @@ goes to stdout and command substitution would capture it.
 
 | Component | Source |
 |---|---|
+| `tools` | Ubuntu archive (`jq`, `ripgrep`, `fd-find`, `htop`, `tree`); `fd` exposed via `update-alternatives` |
 | `docker` | `download.docker.com` apt repo, keyring in `/etc/apt/keyrings/docker.asc` |
 | `gh` | `cli.github.com` apt repo, keyring in `/usr/share/keyrings/` |
 | `node` | NodeSource `setup_lts.x` script, piped to `bash` |

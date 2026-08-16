@@ -3,12 +3,12 @@ type: Issue
 title: "Add build-essential and unattended-upgrades to the baseline"
 description: "Move build-essential into bl_update's package list and add a bl_unattended baseline step that configures automatic security updates, with both surfaced by the verifier."
 tags: [epic-1]
-timestamp: 2026-08-17T13:00:00Z
+timestamp: 2026-08-17T14:15:00Z
 epic: 1
 issue: 02
 slug: baseline-build-essential-auto-updates
 size: S
-status: pr-open
+status: done
 gh_issue: 20
 gh_pr: 35
 depends_on: []
