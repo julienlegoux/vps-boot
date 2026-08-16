@@ -3,12 +3,12 @@ type: Issue
 title: "Repair issues 08 and 09 and widen EPIC_1's doc scope"
 description: "Fix the two Epic 1 instructions that cannot be followed as written, give issue 08 the dependencies its own acceptance criterion needs, and add .claude/CLAUDE.md to EPIC_1's documentation scope."
 tags: [epic-0]
-timestamp: 2026-08-17T09:20:00Z
+timestamp: 2026-08-17T10:00:00Z
 epic: 0
 issue: 01
 slug: repair-08-09-and-epic-doc-scope
 size: S
-status: open
+status: in-progress
 gh_issue: 29
 depends_on: []
 resource: https://github.com/julienlegoux/vps-boot/issues/29
