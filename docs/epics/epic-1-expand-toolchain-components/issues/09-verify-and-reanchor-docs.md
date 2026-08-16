@@ -3,7 +3,7 @@ type: Issue
 title: "Verify the 23-component install and re-anchor the docs"
 description: "Run the epic's acceptance matrix on a fresh Ubuntu 24.04 host in both user modes, then re-anchor SPECS.md's line numbers and reconcile the component counts across README, SPECS and CLAUDE.md."
 tags: [epic-1]
-timestamp: 2026-08-16T11:30:00Z
+timestamp: 2026-08-17T10:00:00Z
 epic: 1
 issue: 09
 slug: verify-and-reanchor-docs
@@ -25,7 +25,7 @@ and that the docs describe one coherent registry rather than eight PRs' worth of
 partial edits.
 
 `docs/planning/SPECS.md` cites line numbers throughout — `vps-boot.sh:396-407`,
-`:1269-1275`, `:1240-1246` and a dozen more. Every issue in this epic shifts
+`:1269-1275`, `:385-391` and a dozen more. Every issue in this epic shifts
 them, and having each one re-anchor the whole file would have produced a conflict
 per PR. This is the sweep, done once at the end.
 
@@ -111,7 +111,6 @@ per PR. This is the sweep, done once at the end.
 
 ## PR size note
 
-Target ~500 changed lines; if this grows past ~1000, split it before opening the
-PR. Expect well under 150 — most of the work here is running things, not writing
-them. If the acceptance runs surface real defects, fix only the small local ones
+If this grows past ~1000 changed lines, split it before opening the PR. Expect
+well under 150 — most of the work here is running things, not writing them. If the acceptance runs surface real defects, fix only the small local ones
 here and open separate issues for the rest.
