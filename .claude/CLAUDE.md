@@ -11,7 +11,7 @@ Single-file bash bootstrap for fresh Ubuntu LTS VPSes. `vps-boot.sh install` run
 3. **UI library** — `banner`, `section`, `rail`, `body`, `done_section`, `step_run`, `ok` / `ko` / `note`, `die`, `warn`, `prompt_text`, `prompt_password`, `prompt_radio`, `prompt_multiselect`. All reads go through `< /dev/tty` so `curl | sudo bash` works.
 4. **Component registry** — `COMPONENT_GROUPS` (the six group names, in order) + `register()` + parallel associative arrays (`COMPONENT_NAME`, `COMPONENT_DESC`, `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_GROUP`, `COMPONENT_INSTALL`, `COMPONENT_CHECK`, `COMPONENT_SIGNIN`)
 5. **Components** — one block per tool (`install_xxx`, `check_xxx`, `register xxx …`), laid out under one `# ══ <group> ══` banner per group. Order = run order.
-6. **Baseline** — `bl_update`, `bl_user`, `bl_ufw`, `bl_ssh_harden`, `bl_fail2ban`. Mandatory, NOT registered, always run in this order. Plus the `set_sshd` helper.
+6. **Baseline** — `bl_update`, `bl_unattended`, `bl_user`, `bl_ufw`, `bl_ssh_harden`, `bl_fail2ban`. Mandatory, NOT registered, always run in this order. Plus the `set_sshd` helper.
 7. **SSH key enrollment** — `enroll_ssh_key`
 8. **Validation** — `valid_username`, `valid_port`, `random_port`
 9. **Flows** — `cmd_install`, `cmd_check`, `do_check`, `cmd_help`

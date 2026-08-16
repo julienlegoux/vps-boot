@@ -2,6 +2,17 @@
 
 ## 2026-08-17
 
+* **Epic 1 issue 02 PR opened**:
+  [PR #35](https://github.com/julienlegoux/vps-boot/pull/35) against `develop`
+  for issue [#20](https://github.com/julienlegoux/vps-boot/issues/20) —
+  `build-essential` joins `bl_update`'s package list, a new mandatory
+  `bl_unattended` baseline step installs `unattended-upgrades` and enables the
+  security pocket only (`Automatic-Reboot` false), and `do_check` gains an
+  unattended-upgrades line plus a `reboot-required` note. Ran in parallel with
+  issue 01. No drift recorded; the fresh-host `apt-config dump` /
+  `systemctl is-enabled` criteria are unverifiable on the Windows dev host, so
+  they're covered by unit tests that stub `apt`/`systemctl`/`chmod` instead.
+
 * **Epic 1 issue 01 PR opened**:
   [PR #34](https://github.com/julienlegoux/vps-boot/pull/34) against `develop`
   for issue [#19](https://github.com/julienlegoux/vps-boot/issues/19) —

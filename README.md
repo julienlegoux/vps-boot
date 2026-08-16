@@ -28,7 +28,8 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 
 | Step | Notes |
 |---|---|
-| System update | `apt update && upgrade` plus base packages; package locks wait up to 180 seconds |
+| System update | `apt update && upgrade` plus base packages, including `build-essential`; package locks wait up to 180 seconds |
+| Automatic security updates | `unattended-upgrades` applies the security pocket only; `Automatic-Reboot` stays `false` |
 | User | optional; skipped for the default root-only setup, otherwise creates a password-backed sudo user |
 | Firewall (UFW) | deny incoming; allow only `<your-port>/tcp`; close the default SSH port `:22` unless you select port 22 |
 | SSH hardening | custom port, managed drop-in, and a timestamped backup of `sshd_config` |
