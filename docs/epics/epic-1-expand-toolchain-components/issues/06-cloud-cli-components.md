@@ -3,11 +3,11 @@ type: Issue
 title: "Add the vercel, hostinger and neon CLIs"
 description: "Populate the cloud group with two npm CLIs and the Hostinger CLI, installed from a checksum-verified GitHub release tarball."
 tags: [epic-1]
-timestamp: 2026-08-16T11:30:00Z
+timestamp: 2026-08-17T11:00:00Z
 epic: 1
 issue: 06
 slug: cloud-cli-components
-size: M
+size: S
 status: open
 gh_issue: 24
 depends_on: [1]
@@ -52,9 +52,10 @@ so make the choice explicit in a comment.
   credential that lists a VPS can rebuild it.
 
 Each `check_*` prints a real version string. Plus rows in `README.md`'s toolchain
-table (`README.md:37-52`) and the component list, count and third-party source
-table in `docs/planning/SPECS.md` — `hostinger` is a new row there alongside `go`
-and `herdr` as a non-apt, non-npm source.
+table (`README.md:37-52`) and a row in `docs/planning/SPECS.md`'s third-party
+source table — `hostinger` is a new row there alongside `go` and `herdr` as a
+non-apt, non-npm source. The component roster and count at `SPECS.md:49-50`
+are reconciled once, in issue 09 — this PR does not touch that sentence.
 
 ## Out of scope
 
@@ -67,6 +68,9 @@ and `herdr` as a non-apt, non-npm source.
 - `wrangler`, `AWS CLI`, `Terraform`, `tailscale` — considered and excluded.
 - A fallback when the GitHub API is rate-limited or the asset naming changes. The
   step fails loudly, which is the intended behaviour.
+- Re-anchoring SPECS.md's line numbers past the moved blocks. The reorder
+  shifts them, and every following issue shifts them again; the sweep is
+  issue 09.
 
 ## Acceptance criteria / Definition of done
 
@@ -86,7 +90,9 @@ and `herdr` as a non-apt, non-npm source.
 - [ ] `vps-boot.sh check` prints a real version for all three, never `?`.
 - [ ] The `vercel` sign-in hint contains `--no-browser`, and the `hostinger` hint
       states the token is account-wide.
-- [ ] `README.md` and `docs/planning/SPECS.md` updated in the same commit.
+- [ ] `README.md`'s toolchain rows and `docs/planning/SPECS.md`'s third-party
+      source table row updated in the same commit; the roster and count at
+      `SPECS.md:49-50` are issue 09's.
 
 ## Relevant files / areas
 
@@ -95,7 +101,8 @@ and `herdr` as a non-apt, non-npm source.
 - `vps-boot.sh:515-530` — `install_node`, the positional dependency.
 - `vps-boot.sh:579-580`, `:597-598`, `:710-711` — existing sign-in hint phrasing
   and column alignment.
-- `README.md:37-52`, `docs/planning/SPECS.md` (third-party source table).
+- `README.md:37-52` (toolchain table); `docs/planning/SPECS.md` (third-party
+  source table — the roster and count at `SPECS.md:49-50` are issue 09's).
 - `docs/planning/changes/change-1-expand-toolchain-components/02-vercel-cli.md`,
   `03-hostinger-cli.md`, `17-neon-cli.md`.
 
@@ -106,5 +113,5 @@ and `herdr` as a non-apt, non-npm source.
 
 ## PR size note
 
-Target ~500 changed lines; if this grows past ~1000, split it before opening the
-PR. Expect ~130, with `hostinger` roughly half of it.
+If this grows past ~1000, split it before opening the PR. Expect ~130, with
+`hostinger` roughly half of it.

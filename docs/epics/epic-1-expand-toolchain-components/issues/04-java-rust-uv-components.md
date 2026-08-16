@@ -3,11 +3,11 @@ type: Issue
 title: "Add the java, rust and uv components"
 description: "Add the newest-LTS JDK, a system-wide non-interactive rustup install, and uv — the three additions that need PATH or environment plumbing outside their own install directory."
 tags: [epic-1]
-timestamp: 2026-08-16T11:30:00Z
+timestamp: 2026-08-17T11:00:00Z
 epic: 1
 issue: 04
 slug: java-rust-uv-components
-size: M
+size: S
 status: open
 gh_issue: 22
 depends_on: [1]
@@ -70,8 +70,10 @@ Three triples in the Components section, each with `COMPONENT_DEFAULT` 1,
   root-only box.
 - `check_uv` reports the `uv` version.
 
-Plus: rows in `README.md`'s toolchain table (`README.md:37-52`), and the
-component list, count and third-party source table in `docs/planning/SPECS.md`.
+Plus: rows in `README.md`'s toolchain table (`README.md:37-52`), and rows in
+`docs/planning/SPECS.md`'s third-party source table. The component roster and
+count at `SPECS.md:49-50` are reconciled once, in issue 09 — this PR does not
+touch that sentence.
 
 ## Out of scope
 
@@ -83,6 +85,9 @@ component list, count and third-party source table in `docs/planning/SPECS.md`.
   `install_python` deliberately does not.
 - Installing a Rust toolchain component set beyond the default (`clippy`,
   `rustfmt` come with the default profile; nothing extra is added).
+- Re-anchoring SPECS.md's line numbers past the moved blocks. The reorder
+  shifts them, and every following issue shifts them again; the sweep is
+  issue 09.
 
 ## Acceptance criteria / Definition of done
 
@@ -103,7 +108,9 @@ component list, count and third-party source table in `docs/planning/SPECS.md`.
       non-LTS major. `apt install --dry-run openjdk-24-jdk-headless` fails on
       noble, so also confirm by reading the loop that 22/23/24/26 are never
       probed at all.
-- [ ] `README.md` and `docs/planning/SPECS.md` updated in the same commit.
+- [ ] `README.md`'s toolchain rows and `docs/planning/SPECS.md`'s third-party
+      source table rows updated in the same commit; the roster and count at
+      `SPECS.md:49-50` are issue 09's.
 
 ## Relevant files / areas
 
@@ -116,7 +123,9 @@ component list, count and third-party source table in `docs/planning/SPECS.md`.
   and "newest LTS" collapse into one version and for Java they do not.
 - `vps-boot.sh:659-668` — `install_go`, the `/etc/profile.d` drop-in pattern.
 - `vps-boot.sh:714-719` — `install_herdr`, the pinned-install-dir pattern.
-- `README.md:37-52`, `docs/planning/SPECS.md`.
+- `README.md:37-52` (toolchain table); `docs/planning/SPECS.md` (third-party
+  source table under Interfaces — the roster and count at `SPECS.md:49-50`
+  are issue 09's).
 - `docs/planning/changes/change-1-expand-toolchain-components/05-java-jdk.md` —
   keeps both superseded verdicts as history; read it before changing the filter.
 - Also: `16-rust.md`, `07-uv.md` in the same ledger.
@@ -128,6 +137,6 @@ component list, count and third-party source table in `docs/planning/SPECS.md`.
 
 ## PR size note
 
-Target ~500 changed lines; if this grows past ~1000, split it before opening the
-PR. Expect ~150. If the Java probe alone turns into a large block, splitting
-`java` out from `rust` + `uv` is the natural cut.
+If this grows past ~1000, split it before opening the PR. Expect ~150. If the
+Java probe alone turns into a large block, splitting `java` out from `rust` +
+`uv` is the natural cut.

@@ -3,7 +3,7 @@ type: Issue
 title: "Add the caddy component with a UFW-aware check"
 description: "Install Caddy from its official apt repo without opening any firewall port, and make the check report the UFW state for 80/443 rather than only the service state."
 tags: [epic-1]
-timestamp: 2026-08-16T11:30:00Z
+timestamp: 2026-08-17T11:00:00Z
 epic: 1
 issue: 07
 slug: caddy-component
@@ -46,8 +46,9 @@ make the state visible so the operator can decide.
   exists for. The note should say what to run to open them.
 - The check must also print a real Caddy version string.
 - Add a row to `README.md`'s toolchain table (`README.md:37-52`) noting that no
-  ports are opened, and update the component list, count and third-party source
-  table in `docs/planning/SPECS.md`.
+  ports are opened, and a row in `docs/planning/SPECS.md`'s third-party source
+  table. The component roster and count at `SPECS.md:49-50` are reconciled
+  once, in issue 09 — this PR does not touch that sentence.
 
 ## Out of scope
 
@@ -58,6 +59,9 @@ make the state visible so the operator can decide.
 - Any Caddyfile, site config, TLS setup, or reverse-proxy default. The component
   installs the binary and its service; configuration is the operator's.
 - Changing `bl_ufw`'s deny-incoming default.
+- Re-anchoring SPECS.md's line numbers past the moved blocks. The reorder
+  shifts them, and every following issue shifts them again; the sweep is
+  issue 09.
 
 ## Acceptance criteria / Definition of done
 
@@ -73,7 +77,9 @@ make the state visible so the operator can decide.
       confirm the exit code explicitly.
 - [ ] After manually running `ufw allow 80/tcp && ufw allow 443/tcp`, re-running
       `vps-boot.sh check` no longer emits the note.
-- [ ] `README.md` and `docs/planning/SPECS.md` updated in the same commit.
+- [ ] `README.md`'s toolchain row and `docs/planning/SPECS.md`'s third-party
+      source table row updated in the same commit; the roster and count at
+      `SPECS.md:49-50` are issue 09's.
 
 ## Relevant files / areas
 
@@ -84,7 +90,8 @@ make the state visible so the operator can decide.
   already parsed (`ufw status | grep -qE "^${SSH_PORT}/tcp[[:space:]]+ALLOW"`);
   reuse that shape.
 - `vps-boot.sh:713-731` — the `herdr` block, which `caddy` registers before.
-- `README.md:37-52`, `docs/planning/SPECS.md`.
+- `README.md:37-52` (toolchain table); `docs/planning/SPECS.md` (third-party
+  source table — the roster and count at `SPECS.md:49-50` are issue 09's).
 - `docs/planning/changes/change-1-expand-toolchain-components/18-caddy.md`.
 
 ## Dependencies
@@ -94,5 +101,4 @@ make the state visible so the operator can decide.
 
 ## PR size note
 
-Target ~500 changed lines; if this grows past ~1000, split it before opening the
-PR. Expect ~70.
+If this grows past ~1000, split it before opening the PR. Expect ~70.

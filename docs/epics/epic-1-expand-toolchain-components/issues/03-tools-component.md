@@ -3,7 +3,7 @@ type: Issue
 title: "Add the tools component (jq, ripgrep, fd, htop, tree)"
 description: "Register a core-group tools component that apt-installs the CLI essentials and exposes fd-find's fdfind binary as fd via update-alternatives."
 tags: [epic-1]
-timestamp: 2026-08-16T11:30:00Z
+timestamp: 2026-08-17T11:00:00Z
 epic: 1
 issue: 03
 slug: tools-component
@@ -44,8 +44,10 @@ already present is what stops that prompt firing.
   half of what this component delivers.
 - Register with `COMPONENT_DEFAULT` 1, `COMPONENT_SCOPE` `system`, group `core`,
   no sign-in hint.
-- Add a row to `README.md`'s toolchain table (`README.md:37-52`) and to the
-  component list and count in `docs/planning/SPECS.md`.
+- Add a row to `README.md`'s toolchain table (`README.md:37-52`) and a row to
+  `docs/planning/SPECS.md`'s third-party source table under Interfaces. The
+  component roster and count at `SPECS.md:49-50` are reconciled once, in
+  issue 09 — this PR does not touch that sentence.
 
 ## Out of scope
 
@@ -55,6 +57,9 @@ already present is what stops that prompt firing.
   part of the decision.
 - Replacing `/usr/bin/fdfind` or diverting the Debian binary. The alternative
   adds a name; it does not repoint the distro's.
+- Re-anchoring SPECS.md's line numbers past the moved blocks. The reorder
+  shifts them, and every following issue shifts them again; the sweep is
+  issue 09.
 
 ## Acceptance criteria / Definition of done
 
@@ -71,7 +76,9 @@ already present is what stops that prompt firing.
       version numbers — never `?`.
 - [ ] Also verify as the created user in created-user mode: `/usr/local/bin` is
       on the default `PATH`, so `fd` must resolve there too.
-- [ ] `README.md` and `docs/planning/SPECS.md` updated in the same commit.
+- [ ] `README.md`'s toolchain row and `docs/planning/SPECS.md`'s third-party
+      source table row updated in the same commit; the roster and count at
+      `SPECS.md:49-50` are issue 09's.
 
 ## Relevant files / areas
 
@@ -81,8 +88,9 @@ already present is what stops that prompt firing.
   `update-alternatives` idiom to copy.
 - `vps-boot.sh:683-711` — `install_hermes`, the reason position matters.
 - `README.md:37-52` — toolchain table.
-- `docs/planning/SPECS.md` — component list under Architecture, third-party
-  source table under Interfaces.
+- `docs/planning/SPECS.md` — third-party source table under Interfaces, the
+  row this PR owns. The roster and count at `SPECS.md:49-50` are issue 09's
+  to reconcile.
 
 ## Dependencies
 
@@ -91,5 +99,5 @@ already present is what stops that prompt firing.
 
 ## PR size note
 
-Target ~500 changed lines; if this grows past ~1000, split it before opening the
-PR. This one should land around 60.
+If this grows past ~1000, split it before opening the PR. This one should land
+around 60.

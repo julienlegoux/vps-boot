@@ -3,7 +3,7 @@ type: Issue
 title: "Add build-essential and unattended-upgrades to the baseline"
 description: "Move build-essential into bl_update's package list and add a bl_unattended baseline step that configures automatic security updates, with both surfaced by the verifier."
 tags: [epic-1]
-timestamp: 2026-08-16T11:30:00Z
+timestamp: 2026-08-17T11:00:00Z
 epic: 1
 issue: 02
 slug: baseline-build-essential-auto-updates
@@ -63,6 +63,9 @@ component.
   puts it in a hardening epic, not this one.
 - Removing Hermes' incidental `build-essential` install. Its installer keeps
   doing whatever it does; this issue only stops the box depending on it.
+- Re-anchoring SPECS.md's line numbers past the moved blocks. The reorder
+  shifts them, and every following issue shifts them again; the sweep is
+  issue 09.
 
 ## Acceptance criteria / Definition of done
 
@@ -102,5 +105,5 @@ component.
 
 ## PR size note
 
-Target ~500 changed lines; if this grows past ~1000, split it before opening the
-PR. This one should land well under 150.
+If this grows past ~1000, split it before opening the PR. This one should land
+well under 150.
