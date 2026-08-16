@@ -3,13 +3,14 @@ type: Issue
 title: "Add the java, rust and uv components"
 description: "Add the newest-LTS JDK, a system-wide non-interactive rustup install, and uv — the three additions that need PATH or environment plumbing outside their own install directory."
 tags: [epic-1]
-timestamp: 2026-08-17T13:05:00Z
+timestamp: 2026-08-17T13:45:00Z
 epic: 1
 issue: 04
 slug: java-rust-uv-components
 size: S
-status: in-progress
+status: pr-open
 gh_issue: 22
+gh_pr: 39
 depends_on: [1]
 resource: https://github.com/julienlegoux/vps-boot/issues/22
 ---
