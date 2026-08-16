@@ -2,6 +2,14 @@
 
 ## 2026-08-17
 
+* **Epic 0 issue 01 completed**: [PR #31](https://github.com/julienlegoux/vps-boot/pull/31)
+  merged, GitHub issue [#29](https://github.com/julienlegoux/vps-boot/issues/29)
+  closed.
+
+* **Epic 0 issue 02 completed**: [PR #32](https://github.com/julienlegoux/vps-boot/pull/32)
+  merged, GitHub issue [#30](https://github.com/julienlegoux/vps-boot/issues/30)
+  closed.
+
 * **Epic 0 issue 02 PR opened**: [PR #32](https://github.com/julienlegoux/vps-boot/pull/32)
   narrows issues 03–07's promise to update `SPECS.md:49-50`'s component roster
   and count down to each issue's own README toolchain row and SPECS.md

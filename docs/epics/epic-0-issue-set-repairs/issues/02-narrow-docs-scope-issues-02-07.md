@@ -3,12 +3,12 @@ type: Issue
 title: "Narrow the docs promise and fix the sizes in issues 02–07"
 description: "Stop issues 03–07 promising to rewrite the same SPECS.md sentence, give issues 02–07 the re-anchoring deferral bullet, and reconcile the size frontmatter with each issue's own estimate."
 tags: [epic-0]
-timestamp: 2026-08-17T11:30:00Z
+timestamp: 2026-08-17T13:00:00Z
 epic: 0
 issue: 02
 slug: narrow-docs-scope-issues-02-07
 size: S
-status: pr-open
+status: done
 gh_issue: 30
 gh_pr: 32
 depends_on: []
