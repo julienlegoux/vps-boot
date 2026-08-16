@@ -2,6 +2,15 @@
 
 ## 2026-08-17
 
+* **Epic 0 issue 02 PR opened**: [PR #32](https://github.com/julienlegoux/vps-boot/pull/32)
+  narrows issues 03–07's promise to update `SPECS.md:49-50`'s component roster
+  and count down to each issue's own README toolchain row and SPECS.md
+  third-party source table row — issue 09 still reconciles the roster and
+  count once, at the end. Also adds the re-anchoring deferral bullet to
+  issues 02–07, corrects `size: M` to `S` on issues 04 and 06, and drops the
+  stale `Target ~500 changed lines` clause from all six. See
+  [issues/02-narrow-docs-scope-issues-02-07.md](epic-0-issue-set-repairs/issues/02-narrow-docs-scope-issues-02-07.md).
+
 * **Epic 0 issue 01 PR opened**: [PR #31](https://github.com/julienlegoux/vps-boot/pull/31)
   repairs issue 08's unsatisfiable `QuickStart` grep and missing `depends_on`
   on issues 03–07, issue 09's phantom `SPECS.md` anchor and stale PR-size
