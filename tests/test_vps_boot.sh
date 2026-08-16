@@ -52,6 +52,31 @@ test_stdin_execution_runs_main() {
 
 source "$SCRIPT"
 
+test_registry_entries_are_well_formed() {
+  # The register() contract: every key in COMPONENTS names real install/check
+  # functions, a known scope, and one of the six fixed groups. The valid groups
+  # are spelled out here rather than read from the script, so a typo in
+  # COMPONENT_GROUPS cannot make this case pass vacuously.
+  local expected_groups="core languages packaging agents cloud infra"
+
+  [[ "${COMPONENT_GROUPS[*]}" == "$expected_groups" ]] || return 1
+  (( ${#COMPONENTS[@]} > 0 )) || return 1
+
+  local key
+  for key in "${COMPONENTS[@]}"; do
+    declare -F "${COMPONENT_INSTALL[$key]:-}" >/dev/null || return 1
+    declare -F "${COMPONENT_CHECK[$key]:-}" >/dev/null || return 1
+    case "${COMPONENT_SCOPE[$key]:-}" in
+      system|user) ;;
+      *) return 1 ;;
+    esac
+    case " $expected_groups " in
+      *" ${COMPONENT_GROUP[$key]:-} "*) ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
 test_step_run_stops_at_first_failure() {
   local trace="$TEST_ROOT/step-trace" rc
   failing_step() {
@@ -657,6 +682,7 @@ run_test "SSH lockdown stops after drop-in write failure" test_lockdown_stops_wh
 run_test "effective SSH values come from sshd -T" test_sshd_effective_value_reads_sshd_T
 run_test "root lockdown is key-only" test_root_lockdown_is_key_only
 run_test "README documents new defaults" test_readme_documents_new_defaults
+run_test "registry entries name real functions, scope and group" test_registry_entries_are_well_formed
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))

@@ -38,18 +38,29 @@ options, constants, UI library, component registry, components, baseline, SSH ke
 enrollment, validation helpers, flows, entry point.
 
 **Component registry.** The toolchain is data, not control flow. `register()`
-(`vps-boot.sh:396-407`) appends a key to the `COMPONENTS` array and populates
-seven parallel associative arrays keyed by that id: `COMPONENT_NAME`,
-`COMPONENT_DESC`, `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_INSTALL`,
-`COMPONENT_CHECK`, `COMPONENT_SIGNIN`. Adding a tool means writing `install_<key>`,
-`check_<key>`, and one `register` line — the wizard's multi-select, QuickStart's
-defaults, the run loop, and the verifier all iterate the registry, so no other
-plumbing changes. Registration order is run order.
+(`vps-boot.sh:402-417`) appends a key to the `COMPONENTS` array and populates
+eight parallel associative arrays keyed by that id: `COMPONENT_NAME`, `COMPONENT_DESC`,
+`COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_GROUP`, `COMPONENT_INSTALL`,
+`COMPONENT_CHECK`, `COMPONENT_SIGNIN`. Adding a tool means writing
+`install_<key>`, `check_<key>`, and one `register` line — the wizard's
+multi-select, QuickStart's defaults, the run loop, and the verifier all iterate
+the registry, so no other plumbing changes. Registration order is run order.
 
-Twelve components are registered, in run order: `sudo_nopasswd`, `docker`, `gh`,
-`node`, `bun`, `pnpm`, `claude`, `opencode`, `python`, `go`, `hermes`, `herdr`.
-All default to on. `COMPONENT_SCOPE` is `system` for every component except
-`hermes`, which is `user` and runs its installer through
+`register <key> <name> <desc> <default 0|1> <scope> <group> <install_fn>
+<check_fn> [signin_hint]` — the first eight arguments are required and fewer is
+a hard error (`die`), so no component can carry an empty group. `signin_hint`
+stays the trailing optional one.
+
+`COMPONENT_GROUPS` fixes the six group names and their display order: `core`,
+`languages`, `packaging`, `agents`, `cloud`, `infra`. The Components section is
+laid out group by group under one `# ══ <group> ══` banner each, so registration
+order matches group order.
+
+Twelve components are registered, in run order: `sudo_nopasswd`, `docker`, `gh`
+(`core`), `node`, `python`, `go` (`languages`), `bun`, `pnpm` (`packaging`),
+`claude`, `opencode`, `hermes` (`agents`), `herdr` (`infra`). `cloud` has no
+members yet. All default to on. `COMPONENT_SCOPE` is `system` for every
+component except `hermes`, which is `user` and runs its installer through
 `sudo -u "$USERNAME" -H bash`.
 
 **Baseline.** Five functions — `bl_update`, `bl_user`, `bl_ufw`, `bl_ssh_harden`,
@@ -159,7 +170,8 @@ goes to stdout and command substitution would capture it.
 
 `bun`, `pnpm`, `claude` and `opencode` are registered `system` scope but install
 through `npm -g`, so all four have a hard ordering dependency on `node` appearing
-earlier in the registry.
+earlier in the registry. The group order holds that for free: `node` sits in
+`languages`, ahead of both `packaging` and `agents`.
 
 `herdr` is the only component that pins its upstream installer's target directory.
 Its default is `$HOME/.local/bin`, which is not on `PATH` for a fresh root-only
@@ -209,7 +221,7 @@ bash tests/test_vps_boot.sh              # all
 bash tests/test_vps_boot.sh <filter>     # or TEST_FILTER=<substring>
 ```
 
-32 cases, registered as explicit `run_test "<label>" <fn>` lines at the bottom of
+33 cases, registered as explicit `run_test "<label>" <fn>` lines at the bottom of
 the file. Output is TAP-flavoured (`ok - <label>` / `not ok - <label>`), with a
 `N passed, M failed` summary and a non-zero exit when anything failed.
 

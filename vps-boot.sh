@@ -381,26 +381,36 @@ _msel_print_line() {
 # Component registry
 # ════════════════════════════════════════════════════════════════════════════
 
+# The six component groups, in display and registration order. Component blocks
+# below are laid out group by group, so registration order matches this list.
+declare -a COMPONENT_GROUPS=(core languages packaging agents cloud infra)
+
 declare -a COMPONENTS=()
 declare -A COMPONENT_NAME=()
 declare -A COMPONENT_DESC=()
 declare -A COMPONENT_DEFAULT=()
 declare -A COMPONENT_SCOPE=()   # "system" or "user"
+declare -A COMPONENT_GROUP=()   # one of COMPONENT_GROUPS
 declare -A COMPONENT_INSTALL=()
 declare -A COMPONENT_CHECK=()
 declare -A COMPONENT_SIGNIN=()  # optional: short hint shown in do_check footer
 
-# register <key> <name> <desc> <default 0|1> <scope system|user> <install_fn> <check_fn> [signin_hint]
+# register <key> <name> <desc> <default 0|1> <scope system|user> <group> <install_fn> <check_fn> [signin_hint]
+# group is required and must be one of COMPONENT_GROUPS.
 # signin_hint is an optional one-line string shown under "Sign in:" in the do_check footer.
 # Leave empty for components that need no post-install authentication.
 register() {
-  local key=$1 name=$2 desc=$3 default=$4 scope=$5 install_fn=$6 check_fn=$7
-  local signin_hint=${8:-}
+  if (( $# < 8 )); then
+    die "register ${1:-<key>}: expected at least 8 arguments (key name desc default scope group install_fn check_fn), got $#"
+  fi
+  local key=$1 name=$2 desc=$3 default=$4 scope=$5 group=$6 install_fn=$7 check_fn=$8
+  local signin_hint=${9:-}
   COMPONENTS+=("$key")
   COMPONENT_NAME[$key]=$name
   COMPONENT_DESC[$key]=$desc
   COMPONENT_DEFAULT[$key]=$default
   COMPONENT_SCOPE[$key]=$scope
+  COMPONENT_GROUP[$key]=$group
   COMPONENT_INSTALL[$key]=$install_fn
   COMPONENT_CHECK[$key]=$check_fn
   COMPONENT_SIGNIN[$key]=$signin_hint
@@ -410,6 +420,8 @@ register() {
 # Components — see CLAUDE.md for the contract
 # Each component: install_<key>, check_<key>, register line.
 # ════════════════════════════════════════════════════════════════════════════
+
+# ══ core ══════════════════════════════════════════════════
 
 # ─── passwordless sudo ─────────────────────────────────────
 install_sudo_nopasswd() {
@@ -443,7 +455,7 @@ check_sudo_nopasswd() {
   fi
 }
 
-register sudo_nopasswd "Passwordless sudo" "sudo without password prompts" 1 system \
+register sudo_nopasswd "Passwordless sudo" "sudo without password prompts" 1 system core \
   install_sudo_nopasswd check_sudo_nopasswd
 
 # ─── docker ────────────────────────────────────────────────
@@ -483,7 +495,7 @@ check_docker() {
   fi
 }
 
-register docker "Docker + Compose" "containers + compose plugin" 1 system install_docker check_docker
+register docker "Docker + Compose" "containers + compose plugin" 1 system core install_docker check_docker
 
 # ─── gh ────────────────────────────────────────────────────
 install_gh() {
@@ -508,8 +520,10 @@ check_gh() {
   fi
 }
 
-register gh "GitHub CLI" "gh" 1 system install_gh check_gh \
+register gh "GitHub CLI" "gh" 1 system core install_gh check_gh \
   "gh auth login            (paste the one-time code in your browser)"
+
+# ══ languages ═════════════════════════════════════════════
 
 # ─── node ──────────────────────────────────────────────────
 install_node() {
@@ -527,75 +541,7 @@ check_node() {
   fi
 }
 
-register node "Node LTS" "current LTS via NodeSource" 1 system install_node check_node
-
-# ─── bun ───────────────────────────────────────────────────
-install_bun() {
-  npm install -g bun
-}
-
-check_bun() {
-  if command -v bun >/dev/null 2>&1; then
-    local v
-    v=$(bun --version 2>/dev/null || echo "?")
-    ok "bun $v"
-  else
-    ko "bun not installed"
-  fi
-}
-
-register bun "Bun" "JS runtime" 1 system install_bun check_bun
-
-# ─── pnpm ──────────────────────────────────────────────────
-install_pnpm() {
-  npm install -g pnpm
-}
-
-check_pnpm() {
-  if command -v pnpm >/dev/null 2>&1; then
-    local v
-    v=$(pnpm --version 2>/dev/null || echo "?")
-    ok "pnpm $v"
-  else
-    ko "pnpm not installed"
-  fi
-}
-
-register pnpm "pnpm" "fast npm-compatible package manager" 1 system install_pnpm check_pnpm
-
-# ─── claude code ───────────────────────────────────────────
-install_claude() {
-  npm install -g @anthropic-ai/claude-code
-}
-
-check_claude() {
-  if command -v claude >/dev/null 2>&1; then
-    ok "claude code installed"
-  else
-    ko "claude code not installed"
-  fi
-}
-
-register claude "Claude Code" "Anthropic's CLI" 1 system install_claude check_claude \
-  "claude                   (first run opens the OAuth browser flow)"
-
-# ─── opencode ──────────────────────────────────────────────
-install_opencode() {
-  npm install -g opencode-ai
-}
-
-check_opencode() {
-  if command -v opencode >/dev/null 2>&1; then
-    local v
-    v=$(opencode --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
-    ok "opencode $v"
-  else
-    ko "opencode not installed"
-  fi
-}
-
-register opencode "opencode" "open-source AI coding agent" 1 system install_opencode check_opencode \
-  "opencode auth login      (pick a provider and paste its API key)"
+register node "Node LTS" "current LTS via NodeSource" 1 system languages install_node check_node
 
 # ─── python ────────────────────────────────────────────────
 install_python() {
@@ -653,7 +599,7 @@ check_python() {
   fi
 }
 
-register python "Python + pip" "latest Python 3 via deadsnakes PPA" 1 system install_python check_python
+register python "Python + pip" "latest Python 3 via deadsnakes PPA" 1 system languages install_python check_python
 
 # ─── go ────────────────────────────────────────────────────
 install_go() {
@@ -677,7 +623,79 @@ check_go() {
   fi
 }
 
-register go "Go" "latest Go via go.dev" 1 system install_go check_go
+register go "Go" "latest Go via go.dev" 1 system languages install_go check_go
+
+# ══ packaging ═════════════════════════════════════════════
+
+# ─── bun ───────────────────────────────────────────────────
+install_bun() {
+  npm install -g bun
+}
+
+check_bun() {
+  if command -v bun >/dev/null 2>&1; then
+    local v
+    v=$(bun --version 2>/dev/null || echo "?")
+    ok "bun $v"
+  else
+    ko "bun not installed"
+  fi
+}
+
+register bun "Bun" "JS runtime" 1 system packaging install_bun check_bun
+
+# ─── pnpm ──────────────────────────────────────────────────
+install_pnpm() {
+  npm install -g pnpm
+}
+
+check_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    local v
+    v=$(pnpm --version 2>/dev/null || echo "?")
+    ok "pnpm $v"
+  else
+    ko "pnpm not installed"
+  fi
+}
+
+register pnpm "pnpm" "fast npm-compatible package manager" 1 system packaging install_pnpm check_pnpm
+
+# ══ agents ════════════════════════════════════════════════
+
+# ─── claude code ───────────────────────────────────────────
+install_claude() {
+  npm install -g @anthropic-ai/claude-code
+}
+
+check_claude() {
+  if command -v claude >/dev/null 2>&1; then
+    ok "claude code installed"
+  else
+    ko "claude code not installed"
+  fi
+}
+
+register claude "Claude Code" "Anthropic's CLI" 1 system agents install_claude check_claude \
+  "claude                   (first run opens the OAuth browser flow)"
+
+# ─── opencode ──────────────────────────────────────────────
+install_opencode() {
+  npm install -g opencode-ai
+}
+
+check_opencode() {
+  if command -v opencode >/dev/null 2>&1; then
+    local v
+    v=$(opencode --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "opencode $v"
+  else
+    ko "opencode not installed"
+  fi
+}
+
+register opencode "opencode" "open-source AI coding agent" 1 system agents install_opencode check_opencode \
+  "opencode auth login      (pick a provider and paste its API key)"
 
 # ─── hermes ────────────────────────────────────────────────
 install_hermes() {
@@ -707,8 +725,13 @@ check_hermes() {
   fi
 }
 
-register hermes "Hermes" "NousResearch AI agent" 1 user install_hermes check_hermes \
+register hermes "Hermes" "NousResearch AI agent" 1 user agents install_hermes check_hermes \
   "hermes setup             (configure LLM provider and API keys)"
+
+# ══ cloud ═════════════════════════════════════════════════
+# (no components in this group yet)
+
+# ══ infra ═════════════════════════════════════════════════
 
 # ─── herdr ─────────────────────────────────────────────────
 install_herdr() {
@@ -728,7 +751,7 @@ check_herdr() {
   fi
 }
 
-register herdr "herdr" "agent-aware terminal multiplexer" 1 system install_herdr check_herdr
+register herdr "herdr" "agent-aware terminal multiplexer" 1 system infra install_herdr check_herdr
 
 # ════════════════════════════════════════════════════════════════════════════
 # Baseline (mandatory, ordered) — NOT registered, always run

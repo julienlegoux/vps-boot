@@ -2,6 +2,15 @@
 
 ## 2026-08-17
 
+* **Epic 1 issue 01 PR opened**:
+  [PR #34](https://github.com/julienlegoux/vps-boot/pull/34) against `develop`
+  for issue [#19](https://github.com/julienlegoux/vps-boot/issues/19) —
+  `register()` gains a required `<group>` argument after `<scope>`,
+  `COMPONENT_GROUPS` fixes the six group names, and the twelve component blocks
+  move verbatim into group order. Unblocks issues 03–08. No drift recorded; the
+  `33 passed, 0 failed` criterion is unverifiable on the Windows dev host (10
+  root-only cases fail identically before and after the change).
+
 * **Retirement**: Epic 0 (Repair the Epic 1 issue set before implementation)
   retired - 2 issues, milestone 2 closed. Consumed reports
   [2026-08-16-issues-epic-1.md](../reviews/2026-08-16-issues-epic-1.md). Fixed:
