@@ -2,6 +2,20 @@
 
 ## 2026-08-17
 
+* **Epic 1 issue 06 PR opened**:
+  [PR #38](https://github.com/julienlegoux/vps-boot/pull/38) against `develop`
+  for issue [#24](https://github.com/julienlegoux/vps-boot/issues/24) —
+  populates the `cloud` group with `vercel` and `neon` (npm `-g` installs,
+  registered after `node`) and `hostinger` (latest `hostinger/api-cli`
+  release resolved from the GitHub API, architecture-matched tarball verified
+  against the release's `checksums.sha256` before installing to
+  `/usr/local/bin`). `check_hostinger` uses the real `hostinger version`
+  subcommand rather than the issue's assumed `--version` flag, which the
+  upstream CLI does not define (verified against its `cmd/root.go`). Ran in
+  parallel with issues 03–05. No drift recorded; the fresh-Ubuntu smoke test
+  and the full `vps-boot.sh check` run are unverifiable on the Windows dev
+  host, so the checksum path was proven standalone outside the repo instead.
+
 * **Epic 1 issue 01 completed**: [PR #34](https://github.com/julienlegoux/vps-boot/pull/34)
   merged, GitHub issue [#19](https://github.com/julienlegoux/vps-boot/issues/19)
   closed. Unblocks issues 03–08.

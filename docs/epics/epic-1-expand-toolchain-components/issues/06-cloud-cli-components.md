@@ -3,13 +3,14 @@ type: Issue
 title: "Add the vercel, hostinger and neon CLIs"
 description: "Populate the cloud group with two npm CLIs and the Hostinger CLI, installed from a checksum-verified GitHub release tarball."
 tags: [epic-1]
-timestamp: 2026-08-17T13:30:00Z
+timestamp: 2026-08-17T14:00:00Z
 epic: 1
 issue: 06
 slug: cloud-cli-components
 size: S
-status: in-progress
+status: pr-open
 gh_issue: 24
+gh_pr: 38
 depends_on: [1]
 resource: https://github.com/julienlegoux/vps-boot/issues/24
 ---
