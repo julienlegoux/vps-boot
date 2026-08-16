@@ -9,8 +9,8 @@ Single-file bash bootstrap for fresh Ubuntu LTS VPSes. `vps-boot.sh install` run
 1. **Header & `set -euo pipefail`**
 2. **Constants** — port range, log path, APT lock timeout, sudoers/sshd/state paths (all env-overridable for tests), ANSI colors
 3. **UI library** — `banner`, `section`, `rail`, `body`, `done_section`, `step_run`, `ok` / `ko` / `note`, `die`, `warn`, `prompt_text`, `prompt_password`, `prompt_radio`, `prompt_multiselect`. All reads go through `< /dev/tty` so `curl | sudo bash` works.
-4. **Component registry** — `register()` + parallel associative arrays (`COMPONENT_NAME`, `COMPONENT_DESC`, `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_INSTALL`, `COMPONENT_CHECK`, `COMPONENT_SIGNIN`)
-5. **Components** — one block per tool (`install_xxx`, `check_xxx`, `register xxx …`). Order = run order.
+4. **Component registry** — `COMPONENT_GROUPS` (the six group names, in order) + `register()` + parallel associative arrays (`COMPONENT_NAME`, `COMPONENT_DESC`, `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_GROUP`, `COMPONENT_INSTALL`, `COMPONENT_CHECK`, `COMPONENT_SIGNIN`)
+5. **Components** — one block per tool (`install_xxx`, `check_xxx`, `register xxx …`), laid out under one `# ══ <group> ══` banner per group. Order = run order.
 6. **Baseline** — `bl_update`, `bl_unattended`, `bl_user`, `bl_ufw`, `bl_ssh_harden`, `bl_fail2ban`. Mandatory, NOT registered, always run in this order. Plus the `set_sshd` helper.
 7. **SSH key enrollment** — `enroll_ssh_key`
 8. **Validation** — `valid_username`, `valid_port`, `random_port`
@@ -19,9 +19,10 @@ Single-file bash bootstrap for fresh Ubuntu LTS VPSes. `vps-boot.sh install` run
 
 ## Adding a new component (worked example: btop)
 
-Three things, all in the **Components** section, between the existing component blocks:
+Three things, all in the **Components** section, inside the group banner the component belongs to (`core`, `languages`, `packaging`, `agents`, `cloud`, `infra` — the six values of `COMPONENT_GROUPS`, in that order):
 
 ```bash
+# ══ core ══════════════════════════════════════════════════
 # ─── btop ─────────────────────────────────────────────────
 install_btop() {
   apt install -y btop
@@ -37,14 +38,18 @@ check_btop() {
   fi
 }
 
-register btop "btop" "process viewer" 1 system install_btop check_btop
+register btop "btop" "process viewer" 1 system core install_btop check_btop
 #        ^id  ^name  ^short-desc      ^default-on (1=yes)
 #                                       ^scope (system|user)
-#                                                ^install fn  ^check fn
+#                                              ^group (one of COMPONENT_GROUPS)
+#                                                   ^install fn  ^check fn
 
-# Optional 8th arg: a short sign-in hint shown in the do_check footer
+# All eight arguments above are required — `register` dies on fewer, so a
+# component can never end up with an empty group.
+#
+# Optional 9th arg: a short sign-in hint shown in the do_check footer
 # (only set this for components that need post-install auth, e.g. gh/claude):
-#   register btop "btop" "process viewer" 1 system install_btop check_btop "btop login (opens browser)"
+#   register btop "btop" "process viewer" 1 system core install_btop check_btop "btop login (opens browser)"
 ```
 
 That's it. The wizard's Custom multi-select picks it up automatically. `cmd_check` runs `check_btop` automatically. No other plumbing.
