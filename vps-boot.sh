@@ -675,22 +675,25 @@ check_hermes() {
 register hermes "Hermes" "NousResearch AI agent" 1 user install_hermes check_hermes \
   "hermes setup             (configure LLM provider and API keys)"
 
-# ─── tmux ─────────────────────────────────────────────────────────────
-install_tmux() {
-  apt install -y tmux
+# ─── herdr ─────────────────────────────────────────────────
+install_herdr() {
+  # Upstream defaults to $HOME/.local/bin, which is not on PATH for a fresh
+  # root-only box. HERDR_INSTALL_DIR pins it system-wide instead, so the
+  # binary works for root and any created user alike.
+  curl -fsSL https://herdr.dev/install.sh | HERDR_INSTALL_DIR=/usr/local/bin sh
 }
 
-check_tmux() {
-  if command -v tmux >/dev/null 2>&1; then
+check_herdr() {
+  if command -v herdr >/dev/null 2>&1; then
     local v
-    v=$(tmux -V 2>/dev/null | awk '{print $NF}' || echo "?")
-    ok "tmux $v"
+    v=$(herdr --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "herdr $v"
   else
-    ko "tmux not installed"
+    ko "herdr not installed"
   fi
 }
 
-register tmux "tmux" "terminal multiplexer" 1 system install_tmux check_tmux
+register herdr "herdr" "agent-aware terminal multiplexer" 1 system install_herdr check_herdr
 
 # ════════════════════════════════════════════════════════════════════════════
 # Baseline (mandatory, ordered) — NOT registered, always run
