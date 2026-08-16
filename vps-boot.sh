@@ -459,6 +459,80 @@ check_sudo_nopasswd() {
 register sudo_nopasswd "Passwordless sudo" "sudo without password prompts" 1 system core \
   install_sudo_nopasswd check_sudo_nopasswd
 
+# ─── tools ─────────────────────────────────────────────────
+install_tools() {
+  apt install -y jq ripgrep fd-find htop tree
+
+  # fd-find is packaged as 'fdfind' on Debian/Ubuntu to avoid collision with the
+  # 'fd' package (a different tool). Expose the common name 'fd' via update-alternatives
+  # so scripts and users can reach it by its standard name.
+  update-alternatives --install /usr/local/bin/fd fd /usr/bin/fdfind 1
+}
+
+check_tools() {
+  local failures=0
+  local versions=()
+
+  # Check jq
+  if command -v jq >/dev/null 2>&1; then
+    local v
+    v=$(jq --version 2>/dev/null | head -1 || echo "?")
+    versions+=("jq $v")
+  else
+    versions+=("jq ✗")
+    ((failures++))
+  fi
+
+  # Check ripgrep (rg)
+  if command -v rg >/dev/null 2>&1; then
+    local v
+    v=$(rg --version 2>/dev/null | head -1 | awk '{print $2}' || echo "?")
+    versions+=("rg $v")
+  else
+    versions+=("rg ✗")
+    ((failures++))
+  fi
+
+  # Check fd (via the update-alternatives link)
+  if command -v fd >/dev/null 2>&1; then
+    local v
+    v=$(fd --version 2>/dev/null | head -1 || echo "?")
+    versions+=("fd $v")
+  else
+    versions+=("fd ✗")
+    ((failures++))
+  fi
+
+  # Check htop
+  if command -v htop >/dev/null 2>&1; then
+    local v
+    v=$(htop --version 2>/dev/null | head -1 || echo "?")
+    versions+=("htop $v")
+  else
+    versions+=("htop ✗")
+    ((failures++))
+  fi
+
+  # Check tree
+  if command -v tree >/dev/null 2>&1; then
+    local v
+    v=$(tree --version 2>/dev/null | head -1 || echo "?")
+    versions+=("tree $v")
+  else
+    versions+=("tree ✗")
+    ((failures++))
+  fi
+
+  if (( failures == 0 )); then
+    ok "tools: ${versions[*]}"
+  else
+    ko "tools: ${versions[*]}"
+  fi
+}
+
+register tools "CLI tools" "jq, ripgrep, fd, htop, tree" 1 system core \
+  install_tools check_tools
+
 # ─── docker ────────────────────────────────────────────────
 install_docker() {
   install -m 0755 -d /etc/apt/keyrings
