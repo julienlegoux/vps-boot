@@ -761,6 +761,31 @@ test_check_caddy_fails_when_service_not_active() {
   (( FAIL == 1 ))
 }
 
+test_check_claude_reports_real_version() {
+  claude() { [[ ${1:-} == --version ]] && printf '1.2.3\n'; }
+  PASS=0; FAIL=0; WARN=0
+  local out
+  out=$(check_claude)
+  [[ "$out" == *"claude 1.2.3"* ]] || return 1
+  [[ "$out" != *'?'* ]]
+}
+
+test_agent_clis_registered_after_node() {
+  local node_line codex_line gemini_line pi_line
+  node_line=$(grep -n '^register node ' "$SCRIPT" | cut -d: -f1)
+  codex_line=$(grep -n '^register codex ' "$SCRIPT" | cut -d: -f1)
+  gemini_line=$(grep -n '^register gemini ' "$SCRIPT" | cut -d: -f1)
+  pi_line=$(grep -n '^register pi ' "$SCRIPT" | cut -d: -f1)
+  [[ -n $node_line && -n $codex_line && -n $gemini_line && -n $pi_line ]] || return 1
+  (( node_line < codex_line )) || return 1
+  (( node_line < gemini_line )) || return 1
+  (( node_line < pi_line ))
+}
+
+test_no_pi_dev_installer_reference() {
+  ! grep -q 'pi\.dev' "$SCRIPT"
+}
+
 test_readme_documents_new_defaults() {
   local enrollment_paragraph
 
@@ -822,6 +847,9 @@ run_test "install_caddy never calls ufw" test_install_caddy_never_calls_ufw
 run_test "check_caddy reports version and open UFW ports as ok" test_check_caddy_reports_version_and_open_ufw_as_ok
 run_test "check_caddy notes closed UFW ports without failing" test_check_caddy_notes_closed_ufw_ports_without_failing
 run_test "check_caddy fails when the service is not active" test_check_caddy_fails_when_service_not_active
+run_test "check_claude reports a real version" test_check_claude_reports_real_version
+run_test "codex, gemini and pi register after node" test_agent_clis_registered_after_node
+run_test "no pi.dev installer reference remains" test_no_pi_dev_installer_reference
 run_test "README documents new defaults" test_readme_documents_new_defaults
 run_test "registry entries name real functions, scope and group" test_registry_entries_are_well_formed
 

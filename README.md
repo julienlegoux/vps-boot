@@ -40,6 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | Tool | What it is |
 |---|---|
 | Passwordless sudo | `NOPASSWD` sudo rule for a created user; not applicable to root-only installs |
+| CLI tools | `jq`, `ripgrep`, `fd`, `htop`, `tree` |
 | Docker + Compose | Docker CE, buildx, and the Compose plugin |
 | GitHub CLI | `gh` |
 | Node LTS | current Node LTS via NodeSource |
@@ -47,6 +48,9 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | pnpm | fast npm-compatible package manager |
 | Claude Code | Anthropic's `claude` CLI |
 | opencode | open-source AI coding agent |
+| Codex | OpenAI's CLI coding agent |
+| Gemini CLI | Google's CLI coding agent |
+| pi | Earendil's CLI coding agent |
 | Python + pip | latest Python 3 via the deadsnakes PPA |
 | Go | latest Go from go.dev |
 | Hermes | NousResearch AI agent |
