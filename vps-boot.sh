@@ -745,7 +745,9 @@ install_claude() {
 
 check_claude() {
   if command -v claude >/dev/null 2>&1; then
-    ok "claude code installed"
+    local v
+    v=$(claude --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "claude $v"
   else
     ko "claude code not installed"
   fi
@@ -771,6 +773,64 @@ check_opencode() {
 
 register opencode "opencode" "open-source AI coding agent" 1 system agents install_opencode check_opencode \
   "opencode auth login      (pick a provider and paste its API key)"
+
+# ─── codex ─────────────────────────────────────────────────
+install_codex() {
+  npm install -g @openai/codex
+}
+
+check_codex() {
+  if command -v codex >/dev/null 2>&1; then
+    local v
+    v=$(codex --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "codex $v"
+  else
+    ko "codex not installed"
+  fi
+}
+
+register codex "Codex" "OpenAI's CLI coding agent" 1 system agents install_codex check_codex \
+  "codex                    (first run opens the OAuth browser flow)"
+
+# ─── gemini ────────────────────────────────────────────────
+install_gemini() {
+  npm install -g @google/gemini-cli
+}
+
+check_gemini() {
+  if command -v gemini >/dev/null 2>&1; then
+    local v
+    v=$(gemini --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "gemini $v"
+  else
+    ko "gemini not installed"
+  fi
+}
+
+register gemini "Gemini CLI" "Google's CLI coding agent" 1 system agents install_gemini check_gemini \
+  "gemini                   (first run opens the OAuth browser flow)"
+
+# ─── pi ────────────────────────────────────────────────────
+install_pi() {
+  # Upstream's documented shell installer (hosted on the vendor's own
+  # install-script domain) prompts interactively to edit PATH; a prompt
+  # inside step_run hangs the run silently, since stdout is redirected to
+  # the log. Install the npm package instead — same binary, no prompt.
+  npm install -g @earendil-works/pi-coding-agent
+}
+
+check_pi() {
+  if command -v pi >/dev/null 2>&1; then
+    local v
+    v=$(pi --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "pi $v"
+  else
+    ko "pi not installed"
+  fi
+}
+
+register pi "pi" "Earendil's CLI coding agent" 1 system agents install_pi check_pi \
+  "pi login                 (pick a provider and paste its API key)"
 
 # ─── hermes ────────────────────────────────────────────────
 install_hermes() {
