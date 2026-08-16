@@ -43,7 +43,9 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | GitHub CLI | `gh` |
 | Node LTS | current Node LTS via NodeSource |
 | Bun | JavaScript runtime |
+| pnpm | fast npm-compatible package manager |
 | Claude Code | Anthropic's `claude` CLI |
+| opencode | open-source AI coding agent |
 | Python + pip | latest Python 3 via the deadsnakes PPA |
 | Go | latest Go from go.dev |
 | Hermes | NousResearch AI agent |

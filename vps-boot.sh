@@ -546,6 +546,23 @@ check_bun() {
 
 register bun "Bun" "JS runtime" 1 system install_bun check_bun
 
+# ─── pnpm ──────────────────────────────────────────────────
+install_pnpm() {
+  npm install -g pnpm
+}
+
+check_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    local v
+    v=$(pnpm --version 2>/dev/null || echo "?")
+    ok "pnpm $v"
+  else
+    ko "pnpm not installed"
+  fi
+}
+
+register pnpm "pnpm" "fast npm-compatible package manager" 1 system install_pnpm check_pnpm
+
 # ─── claude code ───────────────────────────────────────────
 install_claude() {
   npm install -g @anthropic-ai/claude-code
@@ -561,6 +578,24 @@ check_claude() {
 
 register claude "Claude Code" "Anthropic's CLI" 1 system install_claude check_claude \
   "claude                   (first run opens the OAuth browser flow)"
+
+# ─── opencode ──────────────────────────────────────────────
+install_opencode() {
+  npm install -g opencode-ai
+}
+
+check_opencode() {
+  if command -v opencode >/dev/null 2>&1; then
+    local v
+    v=$(opencode --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "opencode $v"
+  else
+    ko "opencode not installed"
+  fi
+}
+
+register opencode "opencode" "open-source AI coding agent" 1 system install_opencode check_opencode \
+  "opencode auth login      (pick a provider and paste its API key)"
 
 # ─── python ────────────────────────────────────────────────
 install_python() {
