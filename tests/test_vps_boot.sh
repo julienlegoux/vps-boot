@@ -747,6 +747,44 @@ test_readme_documents_new_defaults() {
   grep -Eq 'Only then.*reload(s|ing)? .*ssh\.service' <<< "$enrollment_paragraph"
 }
 
+test_cloud_cli_components_registered() {
+  # vercel and neon install via npm, so they must land after node in registry
+  # order (and thus in run order too).
+  local key node_idx=-1 vercel_idx=-1 neon_idx=-1 hostinger_idx=-1 i=0
+  for key in "${COMPONENTS[@]}"; do
+    case "$key" in
+      node) node_idx=$i ;;
+      vercel) vercel_idx=$i ;;
+      neon) neon_idx=$i ;;
+      hostinger) hostinger_idx=$i ;;
+    esac
+    i=$((i + 1))
+  done
+  (( node_idx >= 0 && vercel_idx >= 0 && neon_idx >= 0 && hostinger_idx >= 0 )) || return 1
+  (( vercel_idx > node_idx )) || return 1
+  (( neon_idx > node_idx )) || return 1
+
+  [[ "${COMPONENT_GROUP[vercel]:-}" == "cloud" ]] || return 1
+  [[ "${COMPONENT_GROUP[neon]:-}" == "cloud" ]] || return 1
+  [[ "${COMPONENT_GROUP[hostinger]:-}" == "cloud" ]] || return 1
+
+  # check_neon must probe the neonctl binary (the package name), not the
+  # shorter "neon" binary that ships alongside it.
+  declare -f check_neon | grep -q 'neonctl' || return 1
+
+  # vercel's sign-in hint must avoid the interactive browser callback, which
+  # hangs on a headless box.
+  [[ "${COMPONENT_SIGNIN[vercel]:-}" == *'--no-browser'* ]] || return 1
+
+  # hostinger's token is account-wide (it can rebuild the VPS); the sign-in
+  # hint must say so.
+  [[ "${COMPONENT_SIGNIN[hostinger]:-}" == *'account-wide'* ]] || return 1
+
+  # hostinger installs from a checksum-verified tarball, never an unverified
+  # binary.
+  declare -f install_hostinger | grep -q 'sha256sum' || return 1
+}
+
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
 run_test "stdin execution runs main" test_stdin_execution_runs_main
 run_test "step_run stops at the first failure" test_step_run_stops_at_first_failure
@@ -787,6 +825,7 @@ run_test "codex, gemini and pi register after node" test_agent_clis_registered_a
 run_test "no pi.dev installer reference remains" test_no_pi_dev_installer_reference
 run_test "README documents new defaults" test_readme_documents_new_defaults
 run_test "registry entries name real functions, scope and group" test_registry_entries_are_well_formed
+run_test "cloud CLI components are registered correctly" test_cloud_cli_components_registered
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))

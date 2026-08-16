@@ -8,7 +8,7 @@ epic: 1
 issue: 05
 slug: agent-cli-components
 size: S
-status: pr-open
+status: done
 gh_issue: 23
 gh_pr: 37
 depends_on: [1]
