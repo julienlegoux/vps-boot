@@ -459,6 +459,80 @@ check_sudo_nopasswd() {
 register sudo_nopasswd "Passwordless sudo" "sudo without password prompts" 1 system core \
   install_sudo_nopasswd check_sudo_nopasswd
 
+# ─── tools ─────────────────────────────────────────────────
+install_tools() {
+  apt install -y jq ripgrep fd-find htop tree
+
+  # fd-find is packaged as 'fdfind' on Debian/Ubuntu to avoid collision with the
+  # 'fd' package (a different tool). Expose the common name 'fd' via update-alternatives
+  # so scripts and users can reach it by its standard name.
+  update-alternatives --install /usr/local/bin/fd fd /usr/bin/fdfind 1
+}
+
+check_tools() {
+  local failures=0
+  local versions=()
+
+  # Check jq
+  if command -v jq >/dev/null 2>&1; then
+    local v
+    v=$(jq --version 2>/dev/null | head -1 || echo "?")
+    versions+=("jq $v")
+  else
+    versions+=("jq ✗")
+    ((failures++))
+  fi
+
+  # Check ripgrep (rg)
+  if command -v rg >/dev/null 2>&1; then
+    local v
+    v=$(rg --version 2>/dev/null | head -1 | awk '{print $2}' || echo "?")
+    versions+=("rg $v")
+  else
+    versions+=("rg ✗")
+    ((failures++))
+  fi
+
+  # Check fd (via the update-alternatives link)
+  if command -v fd >/dev/null 2>&1; then
+    local v
+    v=$(fd --version 2>/dev/null | head -1 || echo "?")
+    versions+=("fd $v")
+  else
+    versions+=("fd ✗")
+    ((failures++))
+  fi
+
+  # Check htop
+  if command -v htop >/dev/null 2>&1; then
+    local v
+    v=$(htop --version 2>/dev/null | head -1 || echo "?")
+    versions+=("htop $v")
+  else
+    versions+=("htop ✗")
+    ((failures++))
+  fi
+
+  # Check tree
+  if command -v tree >/dev/null 2>&1; then
+    local v
+    v=$(tree --version 2>/dev/null | head -1 || echo "?")
+    versions+=("tree $v")
+  else
+    versions+=("tree ✗")
+    ((failures++))
+  fi
+
+  if (( failures == 0 )); then
+    ok "tools: ${versions[*]}"
+  else
+    ko "tools: ${versions[*]}"
+  fi
+}
+
+register tools "CLI tools" "jq, ripgrep, fd, htop, tree" 1 system core \
+  install_tools check_tools
+
 # ─── docker ────────────────────────────────────────────────
 install_docker() {
   install -m 0755 -d /etc/apt/keyrings
@@ -782,7 +856,9 @@ install_claude() {
 
 check_claude() {
   if command -v claude >/dev/null 2>&1; then
-    ok "claude code installed"
+    local v
+    v=$(claude --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "claude $v"
   else
     ko "claude code not installed"
   fi
@@ -808,6 +884,64 @@ check_opencode() {
 
 register opencode "opencode" "open-source AI coding agent" 1 system agents install_opencode check_opencode \
   "opencode auth login      (pick a provider and paste its API key)"
+
+# ─── codex ─────────────────────────────────────────────────
+install_codex() {
+  npm install -g @openai/codex
+}
+
+check_codex() {
+  if command -v codex >/dev/null 2>&1; then
+    local v
+    v=$(codex --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "codex $v"
+  else
+    ko "codex not installed"
+  fi
+}
+
+register codex "Codex" "OpenAI's CLI coding agent" 1 system agents install_codex check_codex \
+  "codex                    (first run opens the OAuth browser flow)"
+
+# ─── gemini ────────────────────────────────────────────────
+install_gemini() {
+  npm install -g @google/gemini-cli
+}
+
+check_gemini() {
+  if command -v gemini >/dev/null 2>&1; then
+    local v
+    v=$(gemini --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "gemini $v"
+  else
+    ko "gemini not installed"
+  fi
+}
+
+register gemini "Gemini CLI" "Google's CLI coding agent" 1 system agents install_gemini check_gemini \
+  "gemini                   (first run opens the OAuth browser flow)"
+
+# ─── pi ────────────────────────────────────────────────────
+install_pi() {
+  # Upstream's documented shell installer (hosted on the vendor's own
+  # install-script domain) prompts interactively to edit PATH; a prompt
+  # inside step_run hangs the run silently, since stdout is redirected to
+  # the log. Install the npm package instead — same binary, no prompt.
+  npm install -g @earendil-works/pi-coding-agent
+}
+
+check_pi() {
+  if command -v pi >/dev/null 2>&1; then
+    local v
+    v=$(pi --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    ok "pi $v"
+  else
+    ko "pi not installed"
+  fi
+}
+
+register pi "pi" "Earendil's CLI coding agent" 1 system agents install_pi check_pi \
+  "pi login                 (pick a provider and paste its API key)"
 
 # ─── hermes ────────────────────────────────────────────────
 install_hermes() {

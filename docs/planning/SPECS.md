@@ -163,10 +163,11 @@ goes to stdout and command substitution would capture it.
 
 | Component | Source |
 |---|---|
+| `tools` | Ubuntu archive (`jq`, `ripgrep`, `fd-find`, `htop`, `tree`); `fd` exposed via `update-alternatives` |
 | `docker` | `download.docker.com` apt repo, keyring in `/etc/apt/keyrings/docker.asc` |
 | `gh` | `cli.github.com` apt repo, keyring in `/usr/share/keyrings/` |
 | `node` | NodeSource `setup_lts.x` script, piped to `bash` |
-| `bun`, `pnpm`, `claude`, `opencode` | npm registry, global installs (`bun`, `pnpm`, `@anthropic-ai/claude-code`, `opencode-ai`) |
+| `bun`, `pnpm`, `claude`, `opencode`, `codex`, `gemini`, `pi` | npm registry, global installs (`bun`, `pnpm`, `@anthropic-ai/claude-code`, `opencode-ai`, `@openai/codex`, `@google/gemini-cli`, `@earendil-works/pi-coding-agent`) |
 | `python` | `ppa:deadsnakes/ppa` |
 | `go` | `go.dev/VERSION?m=text` then the matching tarball into `/usr/local` |
 | `java` | `apt`, probed descending for the newest installable LTS `openjdk-NN-jdk-headless` |
@@ -175,10 +176,11 @@ goes to stdout and command substitution would capture it.
 | `hermes` | NousResearch `install.sh` from GitHub raw, piped to `bash` |
 | `herdr` | `herdr.dev/install.sh`, piped to `sh` with `HERDR_INSTALL_DIR=/usr/local/bin` |
 
-`bun`, `pnpm`, `claude` and `opencode` are registered `system` scope but install
-through `npm -g`, so all four have a hard ordering dependency on `node` appearing
-earlier in the registry. The group order holds that for free: `node` sits in
-`languages`, ahead of both `packaging` and `agents`.
+`bun`, `pnpm`, `claude`, `opencode`, `codex`, `gemini` and `pi` are registered
+`system` scope but install through `npm -g`, so all seven have a hard ordering
+dependency on `node` appearing earlier in the registry. The group order holds
+that for free: `node` sits in `languages`, ahead of both `packaging` and
+`agents`.
 
 `herdr` is the only component that pins its upstream installer's target directory.
 Its default is `$HOME/.local/bin`, which is not on `PATH` for a fresh root-only
