@@ -12,7 +12,6 @@ past — and its `source` points at the reports it consumed.
 
 ## Epics
 
-* [Epic 0: Repair the Epic 1 issue set before implementation](epic-0-issue-set-repairs/EPIC_0.md) - open
 * [Epic 1: Expand the toolchain component registry](epic-1-expand-toolchain-components/EPIC_1.md) - open
 
 ## Log

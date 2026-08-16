@@ -2,6 +2,14 @@
 
 ## 2026-08-17
 
+* **Retirement**: Epic 0 (Repair the Epic 1 issue set before implementation)
+  retired - 2 issues, milestone 2 closed. Consumed reports
+  [2026-08-16-issues-epic-1.md](../reviews/2026-08-16-issues-epic-1.md). Fixed:
+  Epic 1's nine issues now carry satisfiable acceptance criteria, resolvable
+  `SPECS.md` anchors, a docs-update boundary that keeps issues 03–07 out of each
+  other's lines, `size` frontmatter matching their own estimates, and
+  `.claude/CLAUDE.md` in the epic's documentation scope. No drift recorded.
+
 * **Epic 0 issue 01 completed**: [PR #31](https://github.com/julienlegoux/vps-boot/pull/31)
   merged, GitHub issue [#29](https://github.com/julienlegoux/vps-boot/issues/29)
   closed.
@@ -17,14 +25,14 @@
   count once, at the end. Also adds the re-anchoring deferral bullet to
   issues 02–07, corrects `size: M` to `S` on issues 04 and 06, and drops the
   stale `Target ~500 changed lines` clause from all six. See
-  [issues/02-narrow-docs-scope-issues-02-07.md](epic-0-issue-set-repairs/issues/02-narrow-docs-scope-issues-02-07.md).
+  [#30](https://github.com/julienlegoux/vps-boot/issues/30).
 
 * **Epic 0 issue 01 PR opened**: [PR #31](https://github.com/julienlegoux/vps-boot/pull/31)
   repairs issue 08's unsatisfiable `QuickStart` grep and missing `depends_on`
   on issues 03–07, issue 09's phantom `SPECS.md` anchor and stale PR-size
   note, and widens `EPIC_1.md`'s documentation scope to include
   `.claude/CLAUDE.md`. See
-  [issues/01-repair-08-09-and-epic-doc-scope.md](epic-0-issue-set-repairs/issues/01-repair-08-09-and-epic-doc-scope.md).
+  [#29](https://github.com/julienlegoux/vps-boot/issues/29).
 
 * **Epic 0 issues created**: two issues, `#29`–`#30`, both on milestone 2 and
   attached as native sub-issues of `#28`. Split by **file ownership** rather than
@@ -41,12 +49,13 @@
   (`gh issue edit <n> --body-file …`), which the epic did not call out: an
   implementer reads `#19`–`#27`, not the `.md`, so a repair that stops at disk
   never reaches them.
-  See [issues/index.md](epic-0-issue-set-repairs/issues/index.md).
+  See [milestone 2](https://github.com/julienlegoux/vps-boot/milestone/2?closed=1).
 
 ## 2026-08-16
 
 * **Epic 0 created**: [Repair the Epic 1 issue set before
-  implementation](epic-0-issue-set-repairs/EPIC_0.md), the remediation lane, from
+  implementation](https://github.com/julienlegoux/vps-boot/issues/28), the
+  remediation lane, from
   [the issue review report](../reviews/2026-08-16-issues-epic-1.md) — the one
   report consumed by this triage. Five findings extracted, none dropped as stale,
   none recorded as `won't-fix`, grouped into five repairs: issue 08's
