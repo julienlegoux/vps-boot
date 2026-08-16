@@ -2,6 +2,20 @@
 
 ## 2026-08-16
 
+* **Epic 0 created**: [Repair the Epic 1 issue set before
+  implementation](epic-0-issue-set-repairs/EPIC_0.md), the remediation lane, from
+  [the issue review report](../reviews/2026-08-16-issues-epic-1.md) — the one
+  report consumed by this triage. Five findings extracted, none dropped as stale,
+  none recorded as `won't-fix`, grouped into five repairs: issue 08's
+  unsatisfiable `QuickStart` grep and issue 09's phantom `SPECS.md` anchor; the
+  docs-update boundary repeated across issues 02–08 so five parallel PRs stop
+  rewriting `SPECS.md:49`; `size:` frontmatter on 04 and 06; `.claude/CLAUDE.md`
+  added to `EPIC_1.md`'s documentation scope; and issue 08 wired to depend on
+  03–07 so it verifies its own 80×24 criterion. No lint reports and no legacy
+  `docs/REPORT_<n>.md` exist in this repo. Tracking issue
+  [#28](https://github.com/julienlegoux/vps-boot/issues/28) on milestone 2. Epic
+  1's implementation waits on this.
+
 * **Epic 1 issues created**: nine issues, `#19`–`#27`, all on milestone 1 and
   attached as native sub-issues of `#18`. Issue 01
   ([#19](https://github.com/julienlegoux/vps-boot/issues/19)) is the gate — it
