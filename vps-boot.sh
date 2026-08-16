@@ -730,7 +730,89 @@ register hermes "Hermes" "NousResearch AI agent" 1 user agents install_hermes ch
   "hermes setup             (configure LLM provider and API keys)"
 
 # ══ cloud ═════════════════════════════════════════════════
-# (no components in this group yet)
+
+# ─── vercel ────────────────────────────────────────────────
+install_vercel() {
+  npm install -g vercel
+}
+
+check_vercel() {
+  if command -v vercel >/dev/null 2>&1; then
+    local v
+    v=$(vercel --version 2>/dev/null | awk '{print $NF}' || echo "?")
+    ok "vercel $v"
+  else
+    ko "vercel not installed"
+  fi
+}
+
+register vercel "Vercel CLI" "deploy and manage Vercel projects" 1 system cloud install_vercel check_vercel \
+  "vercel login --no-browser (bare login waits on a browser callback and hangs headless)"
+
+# ─── neon ──────────────────────────────────────────────────
+install_neon() {
+  npm install -g neonctl
+}
+
+check_neon() {
+  # The npm package is neonctl; probe the binary it actually installs
+  # (neonctl), not the shorter "neon" name a second, unrelated CLI ships.
+  if command -v neonctl >/dev/null 2>&1; then
+    local v
+    v=$(neonctl --version 2>/dev/null | awk '{print $NF}' || echo "?")
+    ok "neonctl $v"
+  else
+    ko "neonctl not installed"
+  fi
+}
+
+register neon "Neon CLI" "manage Neon Postgres branches and projects" 1 system cloud install_neon check_neon
+
+# ─── hostinger ─────────────────────────────────────────────
+install_hostinger() {
+  local ver arch asset base_url tmp_dir
+  ver=$(curl -fsSL https://api.github.com/repos/hostinger/api-cli/releases/latest \
+    | grep -oP '"tag_name":\s*"v\K[^"]+')
+
+  case "$(dpkg --print-architecture)" in
+    amd64) arch=amd64 ;;
+    arm64) arch=arm64 ;;
+    i386)  arch=386 ;;
+    *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; return 1 ;;
+  esac
+
+  asset="hostinger-${ver}-linux-${arch}.tar.gz"
+  base_url="https://github.com/hostinger/api-cli/releases/download/v${ver}"
+
+  tmp_dir=$(mktemp -d)
+  trap 'rm -rf "$tmp_dir"' RETURN
+
+  curl -fsSL -o "$tmp_dir/$asset" "$base_url/$asset"
+  curl -fsSL -o "$tmp_dir/checksums.sha256" "$base_url/hostinger-${ver}-checksums.sha256"
+
+  # Verify the download against the release's published checksums before
+  # installing anything. No manual pass/fail branching here: with pipefail
+  # set, a missing checksum entry (empty grep output) or a mismatch both
+  # make sha256sum exit non-zero, which set -euo pipefail turns into a
+  # failed step — never an unverified binary reaching /usr/local/bin.
+  (cd "$tmp_dir" && grep -F -- "  $asset" checksums.sha256 | sha256sum -c -)
+
+  tar -C "$tmp_dir" -xzf "$tmp_dir/$asset" hostinger
+  install -m 755 "$tmp_dir/hostinger" /usr/local/bin/hostinger
+}
+
+check_hostinger() {
+  if command -v hostinger >/dev/null 2>&1; then
+    local v
+    v=$(hostinger version 2>/dev/null | awk '{print $1}' || echo "?")
+    ok "hostinger $v"
+  else
+    ko "hostinger not installed"
+  fi
+}
+
+register hostinger "Hostinger CLI" "manage your Hostinger account from the API" 1 system cloud install_hostinger check_hostinger \
+  "edit ~/.hostinger.yaml   (api_token is account-wide — it can rebuild your VPS)"
 
 # ══ infra ═════════════════════════════════════════════════
 
