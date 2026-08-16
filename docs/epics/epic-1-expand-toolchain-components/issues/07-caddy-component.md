@@ -3,13 +3,14 @@ type: Issue
 title: "Add the caddy component with a UFW-aware check"
 description: "Install Caddy from its official apt repo without opening any firewall port, and make the check report the UFW state for 80/443 rather than only the service state."
 tags: [epic-1]
-timestamp: 2026-08-17T13:30:00Z
+timestamp: 2026-08-17T13:45:00Z
 epic: 1
 issue: 07
 slug: caddy-component
 size: S
-status: in-progress
+status: pr-open
 gh_issue: 25
+gh_pr: 40
 depends_on: [1]
 resource: https://github.com/julienlegoux/vps-boot/issues/25
 ---

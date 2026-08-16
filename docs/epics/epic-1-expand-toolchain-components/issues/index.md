@@ -6,6 +6,6 @@
 * [Add the java, rust and uv components](./04-java-rust-uv-components.md) - S, open ([#22](https://github.com/julienlegoux/vps-boot/issues/22))
 * [Add the codex, gemini and pi agent CLIs](./05-agent-cli-components.md) - S, pr-open ([#23](https://github.com/julienlegoux/vps-boot/issues/23), [PR #37](https://github.com/julienlegoux/vps-boot/pull/37))
 * [Add the vercel, hostinger and neon CLIs](./06-cloud-cli-components.md) - S, open ([#24](https://github.com/julienlegoux/vps-boot/issues/24))
-* [Add the caddy component with a UFW-aware check](./07-caddy-component.md) - S, in-progress ([#25](https://github.com/julienlegoux/vps-boot/issues/25))
+* [Add the caddy component with a UFW-aware check](./07-caddy-component.md) - S, pr-open ([#25](https://github.com/julienlegoux/vps-boot/issues/25), [PR #40](https://github.com/julienlegoux/vps-boot/pull/40))
 * [Rework the wizard: Full install mode and grouped grid picker](./08-wizard-full-install-and-grid-picker.md) - M, open ([#26](https://github.com/julienlegoux/vps-boot/issues/26))
 * [Verify the 23-component install and re-anchor the docs](./09-verify-and-reanchor-docs.md) - S, open ([#27](https://github.com/julienlegoux/vps-boot/issues/27))
