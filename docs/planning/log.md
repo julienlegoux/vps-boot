@@ -1,5 +1,24 @@
 # Log
 
+## 2026-08-16 — change 1, decision 05 reopened
+
+* **[Decision 05 (Java)](/changes/change-1-expand-toolchain-components/05-java-jdk.md)
+  reopened and re-decided** after the epic was written. The accepted verdict —
+  probe for the newest installable `openjdk-NN-jdk-headless` — had no notion of
+  LTS. It resolves correctly to 25 on noble today, but only because Ubuntu has
+  backported *only* LTS JDKs there (`17`, `21`, `25` present; `22`, `23`, `24`,
+  `26` absent): the right answer by accident, resting on a policy this project
+  does not control. New verdict restricts the probe to LTS majors via
+  `(n - 21) % 4 == 0` (17/21/25/29/33), which needs no bump in 2027.
+* **Root cause worth remembering**: for Java, "distro default", "newest" and
+  "newest LTS" are three different versions — 21, 25 and 25 today. For `go` and
+  `python`, whose probing idiom was borrowed, they collapse into one. That is
+  why the idiom transplanted badly and needed two corrections. Both superseded
+  verdicts are kept as history in the decision doc.
+* **Propagated** to `EPIC_1.md` (scope table + Notes) and to
+  [issue #18](https://github.com/julienlegoux/vps-boot/issues/18);
+  `gh_issue`/`milestone` untouched.
+
 ## 2026-08-16 — change 1
 
 * **Change ledger opened**: [change

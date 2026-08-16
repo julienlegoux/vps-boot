@@ -3,13 +3,13 @@ type: Decision
 title: "Java / JDK"
 description: "Which JDK distribution and version does the java component install, and does it set JAVA_HOME?"
 tags: [decision, change]
-timestamp: 2026-08-16T09:05:00Z
+timestamp: 2026-08-16T10:05:00Z
 phase: change
 decision: 05
 slug: java-jdk
 status: decided
-verdict: "A - probe for the newest installable openjdk-NN-jdk-headless, plus JAVA_HOME via /etc/profile.d"
-decided_via: triage
+verdict: "A-prime - probe for the newest installable LTS openjdk-NN-jdk-headless, plus JAVA_HOME via /etc/profile.d"
+decided_via: discussion
 depends_on: [approach]
 change: 1
 change_slug: expand-toolchain-components
@@ -53,7 +53,10 @@ Facts:
   candidate versions descending, take the first that `apt install --dry-run`
   accepts. Lands on 25 today, follows the distro to 29 without an edit. This is
   precisely what `install_python` already does against deadsnakes
-  (`vps-boot.sh:605-617`), so the idiom is in the file.
+  (`vps-boot.sh:605-617`), so the idiom is in the file. **Superseded by A′ —
+  see the Verdict: "newest" and "newest LTS" are not the same thing for Java.**
+- **A′. Probe for the newest installable *LTS* `openjdk-NN-jdk-headless`** — the
+  same descending probe, filtered to LTS majors only.
 - **B. `openjdk-25-jdk-headless` pinned** — explicit, obvious, reproducible;
   goes stale silently when the next LTS lands and nobody bumps it (there is no
   release process here that would prompt a bump).
@@ -93,16 +96,46 @@ state would pass a naive `command -v java`.
 
 # Verdict
 
-**A.** Accepted at triage, after the user corrected the first recommendation.
+**A′ — probe for the newest installable *LTS* JDK.** Reopened and re-decided
+2026-08-16, after the epic was written; see the history below.
 
-Probe descending for the newest installable `openjdk-NN-jdk-headless` via
-`apt install --dry-run`, the same idiom `install_python` uses against deadsnakes
-(`vps-boot.sh:605-617`). Lands on 25 today; follows the archive to 29 without an
-edit. Plus `/etc/profile.d/java.sh` exporting `JAVA_HOME`, which apt does not
-set. `check_java` redirects `2>&1` (java writes its version to stderr) and
-asserts `javac`, so a JRE-only state fails.
+Probe descending via `apt install --dry-run`, the `install_python` idiom
+(`vps-boot.sh:605-617`), but **restricted to LTS majors**. Since Java 17 the LTS
+cadence is every four feature releases (two years): 17, 21, 25, 29, 33 — every
+LTS major satisfies `(n - 21) % 4 == 0`. So the candidate filter is arithmetic
+rather than a hardcoded list that would need bumping in 2027:
 
-The original recommendation said `default-jdk-headless`, conflating "Ubuntu's
-default" with "the current LTS". They are not the same: noble defaults to 21,
-the current LTS is 25, and `openjdk-25-jdk-headless` is in noble's `universe`.
-This correction is what prompted [20](20-version-audit.md).
+```bash
+for (( n=CANDIDATE_MAX; n>=17; n-- )); do
+  (( (n - 21) % 4 == 0 )) || continue          # LTS majors only
+  apt install -y --dry-run "openjdk-${n}-jdk-headless" >/dev/null 2>&1 || continue
+  jdk="openjdk-${n}-jdk-headless"; break
+done
+```
+
+Lands on 25 today, picks up 29 when Ubuntu packages it, and can never select a
+six-month feature release. Plus `/etc/profile.d/java.sh` exporting `JAVA_HOME`,
+which apt does not set. `check_java` redirects `2>&1` (java writes its version
+to stderr) and asserts `javac`, so a JRE-only state fails.
+
+## History
+
+**Second verdict — "newest installable", accepted at triage, now superseded.**
+It had no notion of LTS: it took the highest `openjdk-NN` the archive would
+install. Verified against noble today, that still resolves to 25 — but only
+because Ubuntu has backported *only* LTS JDKs into noble (`17`, `21`, `25`
+present; `22`, `23`, `24`, `26` absent). The correct answer was arriving by
+accident, resting on an Ubuntu backport policy this project does not control,
+and Ubuntu does package feature releases in its interim distros. A JDK with six
+months of support on a box meant to be left running unattended is the wrong
+default, and nothing in the probe would have prevented it.
+
+**First recommendation — `default-jdk-headless`, wrong before triage.** It
+conflated "Ubuntu's default" with "the current LTS": noble defaults to 21, the
+current LTS is 25, and `openjdk-25-jdk-headless` is in noble's `universe`. That
+correction is what prompted [20](20-version-audit.md).
+
+Both misses share one root cause, worth stating because it is the thing to check
+next time: **for Java, "default", "newest" and "newest LTS" are three different
+versions.** For `go` and `python` — the components whose idiom was borrowed —
+they collapse into one, which is why the idiom transplanted badly.

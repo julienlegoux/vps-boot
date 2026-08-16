@@ -3,7 +3,7 @@ type: Epic
 title: "Expand the toolchain component registry"
 description: "Take vps-boot.sh from twelve components to twenty-three, harden the baseline with build-essential and automatic security updates, and rebuild the component picker so the list still fits a terminal."
 tags: [epic, change]
-timestamp: 2026-08-16T09:45:00Z
+timestamp: 2026-08-16T10:05:00Z
 epic: 1
 slug: expand-toolchain-components
 status: open
@@ -38,7 +38,7 @@ in registration order. Every `check_*` must print a real version string.
 | `pi` | `npm -g @earendil-works/pi-coding-agent` | **not** `pi.dev/install.sh` — that wrapper prompts for a `PATH` edit and would hang `step_run` |
 | `codex` | `npm -g @openai/codex` | |
 | `gemini` | `npm -g @google/gemini-cli` | |
-| `java` | probe newest installable `openjdk-NN-jdk-headless` | `apt --dry-run` descending, the `install_python` idiom; + `/etc/profile.d/java.sh` exporting `JAVA_HOME`; check redirects `2>&1` and asserts `javac` |
+| `java` | probe newest installable **LTS** `openjdk-NN-jdk-headless` | `apt --dry-run` descending over LTS majors only — `(n - 21) % 4 == 0`, i.e. 17/21/25/29/33; + `/etc/profile.d/java.sh` exporting `JAVA_HOME`; check redirects `2>&1` and asserts `javac` |
 | `rust` | `rustup` with `-y --no-modify-path` | `RUSTUP_HOME=/usr/local/rustup`, `CARGO_HOME=/usr/local/cargo`, + `/etc/profile.d/rust.sh`; bare `rustup` is interactive and would hang `step_run` |
 | `uv` | `astral.sh/uv/install.sh` with `UV_INSTALL_DIR=/usr/local/bin` | mirrors `install_herdr`'s pinned-dir fix |
 | `caddy` | official apt repo (`dl.cloudsmith.io/public/caddy/stable`) | **opens no firewall ports**; check must report the UFW state for 80/443, not just `systemctl is-active` |
@@ -167,11 +167,27 @@ the runner-up and is worth revisiting while the wizard is already being touched.
 **The Hostinger token is account-wide.** The same credential that lists a VPS
 can rebuild it. The sign-in hint should say so.
 
-**Java tracks the archive, not the distro default.** `default-jdk` on noble
-points at 21; the current LTS is 25 and `openjdk-25-jdk-headless` is in
-`universe`. Probing for the newest installable package is what keeps this true
-after the next LTS. This distinction is the only instance of its kind in the
-registry — every other component already resolves newest-at-install-time.
+**Java needs the newest LTS — which is neither the distro default nor the newest
+package.** Three different versions hide behind "current Java" here, and the
+component has to pick the third:
+
+- `default-jdk` on noble → **21**, one LTS behind;
+- newest `openjdk-NN` the archive will install → **25** today, but only because
+  Ubuntu has backported *only* LTS JDKs into noble (`17`, `21`, `25` present;
+  `22`, `23`, `24`, `26` absent). That is Ubuntu's backport policy, not a
+  guarantee, and Ubuntu does package feature releases in its interim distros;
+- newest **LTS** → **25**, and the only one of the three that stays correct.
+
+Hence the `(n - 21) % 4 == 0` filter: since Java 17 the LTS cadence is four
+feature releases (two years), so 17/21/25/29/33 are exactly the LTS majors, and
+the rule needs no bumping in 2027. A six-month feature release on a box meant to
+run unattended is the wrong default.
+
+This trap is unique to Java. For `go` and `python` — whose probing idiom was
+borrowed — "default", "newest" and "newest LTS" collapse into one version, which
+is why the idiom transplanted badly and needed two corrections. See
+[decision 05](../../planning/changes/change-1-expand-toolchain-components/05-java-jdk.md),
+which keeps both superseded verdicts as history.
 
 **`fd-find` installs its binary as `fdfind`** on Debian/Ubuntu, not `fd`.
 
