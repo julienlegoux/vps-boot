@@ -3,7 +3,7 @@ type: Issue
 title: "Add COMPONENT_GROUP and reorder the registry by group"
 description: "Add a COMPONENT_GROUP field to register(), assign a group to each of the twelve existing components, reorder the Components section into the six groups, and add the registry-invariant test."
 tags: [epic-1]
-timestamp: 2026-08-17T13:00:00Z
+timestamp: 2026-08-17T13:30:00Z
 epic: 1
 issue: 01
 slug: registry-groups-and-reorder

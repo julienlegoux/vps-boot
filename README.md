@@ -57,6 +57,9 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | Java (JDK) | newest installable LTS OpenJDK, `JAVA_HOME` via `/etc/profile.d` |
 | Rust | `rustup` toolchain (rustc, cargo), installed system-wide |
 | Hermes | NousResearch AI agent |
+| Vercel CLI | `vercel` |
+| Neon CLI | `neonctl` |
+| Hostinger CLI | `hostinger` |
 | herdr | agent-aware terminal multiplexer |
 
 QuickStart selects all default components. It includes Passwordless sudo only when you create a user. With a created user, Custom shows Passwordless sudo in the same checkbox list as the other components; root-only mode filters it out.
