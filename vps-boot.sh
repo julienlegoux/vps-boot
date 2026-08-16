@@ -457,8 +457,8 @@ install_docker() {
   codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
   echo "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $codename stable" \
     > /etc/apt/sources.list.d/docker.list
-  apt-get update -y
-  apt-get install -y \
+  apt update -y
+  apt install -y \
     docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin
   add_docker_group_if_needed
@@ -494,8 +494,8 @@ install_gh() {
   arch=$(dpkg --print-architecture)
   echo "deb [arch=$arch signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     > /etc/apt/sources.list.d/github-cli.list
-  apt-get update -y
-  apt-get install -y gh
+  apt update -y
+  apt install -y gh
 }
 
 check_gh() {
@@ -565,7 +565,7 @@ register claude "Claude Code" "Anthropic's CLI" 1 system install_claude check_cl
 # ─── python ────────────────────────────────────────────────
 install_python() {
   add-apt-repository -y ppa:deadsnakes/ppa
-  apt-get update -y
+  apt update -y
 
   # Pick the newest python3.X that actually has an installable candidate.
   # Deadsnakes lists pre-release names (e.g. 3.15) before the binary is shipped
@@ -574,7 +574,7 @@ install_python() {
   for v in $(apt-cache search '^python3\.[0-9]+$' \
               | grep -oP 'python3\.\d+' \
               | sort -t. -k2 -n -r); do
-    if apt-get install -y --dry-run "$v" "${v}-venv" >/dev/null 2>&1; then
+    if apt install -y --dry-run "$v" "${v}-venv" >/dev/null 2>&1; then
       pyver="$v"
       break
     fi
@@ -583,7 +583,7 @@ install_python() {
 
   # distutils was removed from stdlib in 3.12 and deadsnakes no longer ships
   # python3.X-distutils for newer versions, so we don't install it.
-  apt-get install -y "$pyver" "${pyver}-venv"
+  apt install -y "$pyver" "${pyver}-venv"
 
   # Bootstrap pip for the new interpreter via ensurepip (ships with python3.X-venv).
   # python3-pip would only wire pip to the system Python, not our $pyver.
@@ -726,9 +726,9 @@ remove_apt_lock_timeout() {
 }
 
 bl_update() {
-  apt-get update -y
-  apt-get upgrade -y
-  apt-get install -y \
+  apt update -y
+  apt upgrade -y
+  apt install -y \
     wget gnupg lsb-release ca-certificates \
     software-properties-common ufw fail2ban git unzip curl sudo
 }

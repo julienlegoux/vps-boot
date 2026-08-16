@@ -24,7 +24,7 @@ Three things, all in the **Components** section, between the existing component 
 ```bash
 # ─── btop ─────────────────────────────────────────────────
 install_btop() {
-  apt-get install -y btop
+  apt install -y btop
 }
 
 check_btop() {
