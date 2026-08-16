@@ -170,6 +170,7 @@ goes to stdout and command substitution would capture it.
 | `python` | `ppa:deadsnakes/ppa` |
 | `go` | `go.dev/VERSION?m=text` then the matching tarball into `/usr/local` |
 | `hermes` | NousResearch `install.sh` from GitHub raw, piped to `bash` |
+| `caddy` | `dl.cloudsmith.io/public/caddy/stable` apt repo, keyring in `/usr/share/keyrings/`; installs and enables the service but opens no firewall ports |
 | `herdr` | `herdr.dev/install.sh`, piped to `sh` with `HERDR_INSTALL_DIR=/usr/local/bin` |
 
 `bun`, `pnpm`, `claude` and `opencode` are registered `system` scope but install
