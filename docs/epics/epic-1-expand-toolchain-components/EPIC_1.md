@@ -3,7 +3,7 @@ type: Epic
 title: "Expand the toolchain component registry"
 description: "Take vps-boot.sh from twelve components to twenty-three, harden the baseline with build-essential and automatic security updates, and rebuild the component picker so the list still fits a terminal."
 tags: [epic, change]
-timestamp: 2026-08-16T10:05:00Z
+timestamp: 2026-08-17T10:00:00Z
 epic: 1
 slug: expand-toolchain-components
 status: open
@@ -87,7 +87,8 @@ assert `COMPONENT_INSTALL`/`COMPONENT_CHECK` name functions `declare -F` finds,
 
 **Documentation, in the same commit as the code.** `README.md`'s toolchain
 table; `SPECS.md`'s component list, count, third-party source table and the line
-anchors past every insertion point.
+anchors past every insertion point; `.claude/CLAUDE.md`'s component-registry
+contract and worked example, which document `register()`'s signature.
 
 ## Out of scope
 
@@ -124,7 +125,8 @@ anchors past every insertion point.
    the picker, its collapse summary, and the Confirm screen.
 6. `check_caddy` reports the UFW state for 80/443, not just the service state.
 7. `check` surfaces unattended-upgrades status and `/var/run/reboot-required`.
-8. `README.md` and `SPECS.md` are updated in the same commit as the code.
+8. `README.md`, `SPECS.md` and `.claude/CLAUDE.md` are updated in the same
+   commit as the code.
 
 ## Dependencies
 

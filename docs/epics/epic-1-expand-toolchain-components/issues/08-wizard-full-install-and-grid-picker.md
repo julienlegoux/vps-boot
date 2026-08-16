@@ -3,14 +3,14 @@ type: Issue
 title: "Rework the wizard: Full install mode and grouped grid picker"
 description: "Rename QuickStart to Full install with registry-computed labels, rewrite prompt_multiselect as a grouped multi-column grid with a/n hotkeys, and stop both summary surfaces joining unbounded lists into one line."
 tags: [epic-1]
-timestamp: 2026-08-16T11:30:00Z
+timestamp: 2026-08-17T10:00:00Z
 epic: 1
 issue: 08
 slug: wizard-full-install-and-grid-picker
 size: M
 status: open
 gh_issue: 26
-depends_on: [1]
+depends_on: [1, 3, 4, 5, 6, 7]
 resource: https://github.com/julienlegoux/vps-boot/issues/26
 ---
 
@@ -44,6 +44,10 @@ registry.
 - `QuickStart` becomes `Full install`. Two modes, not three: `a` (all) and `n`
   (none) hotkeys in the picker make a separate "baseline only" mode unnecessary —
   baseline only is Custom + `n`, two keystrokes.
+- The rename applies to `vps-boot.sh`, `tests/` and `README.md` only.
+  `docs/planning/changes/`, `EPIC_1.md` and the issue files under `docs/epics/`
+  keep `QuickStart` deliberately — they are the record of the decision to
+  rename, not surfaces the rename applies to.
 - Both mode labels are **computed from the registry**, never enumerated. Target
   rendering:
 
@@ -129,13 +133,17 @@ suite fails without them:
   It was the fallback and was not taken. It may still be the mechanism *inside*
   the grid if that is how the redraw bug gets fixed.
 - Changing which components exist or their defaults. All 23 stay default-on.
+- Re-anchoring SPECS.md's line numbers past the moved blocks. The reorder
+  shifts them, and every following issue shifts them again; the sweep is
+  issue 09.
 
 ## Acceptance criteria / Definition of done
 
 - [ ] `bash tests/test_vps_boot.sh` passes with **no case renamed away** — the
       three stubs, the README assertion and the label above are updated to the new
       mode name, and the count stays at 33 (32 + issue 01's invariant).
-- [ ] `grep -rn QuickStart vps-boot.sh tests/ README.md docs/` returns nothing.
+- [ ] `grep -rn QuickStart vps-boot.sh tests/ README.md docs/planning/SPECS.md`
+      returns nothing.
 - [ ] `bash -n vps-boot.sh` is clean.
 - [ ] The mode label is computed: `grep -n 'Install mode' -A 4 vps-boot.sh` shows
       no hardcoded tool names, and the count shown in root-only mode differs from
@@ -174,11 +182,10 @@ suite fails without them:
 
 ## Dependencies
 
-- **Blocked by**: issue 01 (`COMPONENT_GROUP` is what the grid lays out by).
-- **Blocks**: nothing, but note it renders whatever the registry holds at merge
-  time. Verifying the 80×24 criterion at the real 23 components requires issues
-  03–07 merged; if this lands first, re-verify during issue 09 rather than
-  claiming it at 12 components.
+- **Blocked by**: issue 01, for `COMPONENT_GROUP`, and issues 03–07, so the
+  80×24 criterion is verified against the real 23 components rather than
+  against whatever the registry happens to hold.
+- **Blocks**: nothing.
 
 ## PR size note
 

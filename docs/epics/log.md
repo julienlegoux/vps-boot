@@ -2,6 +2,13 @@
 
 ## 2026-08-17
 
+* **Epic 0 issue 01 PR opened**: [PR #31](https://github.com/julienlegoux/vps-boot/pull/31)
+  repairs issue 08's unsatisfiable `QuickStart` grep and missing `depends_on`
+  on issues 03–07, issue 09's phantom `SPECS.md` anchor and stale PR-size
+  note, and widens `EPIC_1.md`'s documentation scope to include
+  `.claude/CLAUDE.md`. See
+  [issues/01-repair-08-09-and-epic-doc-scope.md](epic-0-issue-set-repairs/issues/01-repair-08-09-and-epic-doc-scope.md).
+
 * **Epic 0 issues created**: two issues, `#29`–`#30`, both on milestone 2 and
   attached as native sub-issues of `#28`. Split by **file ownership** rather than
   by repair: repairs 2 and 3 both span Epic 1's issues 02–08, so a per-repair
