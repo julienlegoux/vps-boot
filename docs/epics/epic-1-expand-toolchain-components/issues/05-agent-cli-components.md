@@ -3,12 +3,12 @@ type: Issue
 title: "Add the codex, gemini and pi agent CLIs"
 description: "Register three npm-installed coding agents in the agents group and give check_claude the version string it is the only existing check to lack."
 tags: [epic-1]
-timestamp: 2026-08-17T11:00:00Z
+timestamp: 2026-08-17T13:15:00Z
 epic: 1
 issue: 05
 slug: agent-cli-components
 size: S
-status: open
+status: in-progress
 gh_issue: 23
 depends_on: [1]
 resource: https://github.com/julienlegoux/vps-boot/issues/23
