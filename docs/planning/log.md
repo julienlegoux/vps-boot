@@ -1,5 +1,35 @@
 # Log
 
+## 2026-08-16 — change 1
+
+* **Change ledger opened**: [change
+  1](/changes/change-1-expand-toolchain-components/index.md), brownfield
+  planning for expanding the component registry. 20 decisions, all decided;
+  delivered as [Epic
+  1](../epics/epic-1-expand-toolchain-components/EPIC_1.md)
+  ([issue #18](https://github.com/julienlegoux/vps-boot/issues/18), milestone 1).
+* **Confirmed**: `tmux` is fully gone from the working tree — only git history
+  and this bundle's log still mention it.
+* **Audit findings** that shaped the change, none of them visible from the
+  planning docs alone:
+  * `bl_update` installs no compiler. `build-essential` reaches most boxes only
+    as a side effect of Hermes' installer, so unticking Hermes silently removes
+    `gcc`. Moved into the baseline.
+  * `prompt_multiselect` redraws with a blind `printf '\033[%dA' "$n"`, which
+    corrupts the display once the block scrolls past the terminal fold. Latent
+    at 12 components, breaking at 23.
+  * The wizard's QuickStart label advertises five tools while installing twelve
+    — it was never updated as components landed. Replaced with registry-computed
+    counts.
+  * Three upstream installers (`pi.dev`, bare `rustup`, Hermes) prompt
+    interactively, which hangs `step_run` silently.
+* **Version audit** of all twelve existing components: nothing stale. The
+  distro-default trap that nearly shipped a Java 21 is unique to Java; every
+  other component resolves newest-at-install-time. One gap found —
+  `check_claude` reports no version. Recorded on
+  [decision 20](/changes/change-1-expand-toolchain-components/20-version-audit.md).
+* **`docs/epics/` established** by this run, per the bundle rules.
+
 ## 2026-08-16
 
 * **Update**: refreshed the map from `50c133b` to `2e2cb76` (develop). Four

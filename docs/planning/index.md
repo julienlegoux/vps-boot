@@ -17,6 +17,7 @@ clone and is kept in sync with the code it describes.
 ## Ledger
 
 * [Mapping decisions](mapping/index.md) - 3 decided, 0 open
+* [Change 1 — Expand the toolchain component registry](changes/change-1-expand-toolchain-components/index.md) - 20 decided, 0 open
 
 ## Log
 
