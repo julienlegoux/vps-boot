@@ -1,5 +1,24 @@
 # Log
 
+## 2026-08-17
+
+* **Epic 0 issues created**: two issues, `#29`–`#30`, both on milestone 2 and
+  attached as native sub-issues of `#28`. Split by **file ownership** rather than
+  by repair: repairs 2 and 3 both span Epic 1's issues 02–08, so a per-repair
+  split would have put two PRs in issue 08 at once. Issue 01
+  ([#29](https://github.com/julienlegoux/vps-boot/issues/29)) owns `EPIC_1.md`,
+  issue 08 and issue 09 — the grep that cannot return nothing, the phantom
+  `SPECS.md` anchor, `.claude/CLAUDE.md` in the epic's doc scope, and 08's
+  `depends_on` on 03–07. Issue 02
+  ([#30](https://github.com/julienlegoux/vps-boot/issues/30)) owns issues 02–07
+  and `issues/index.md` — the narrowed docs promise, the deferral bullet, and the
+  `size` corrections. The two file sets are disjoint, so neither blocks the other.
+  Both add mirroring the edited bodies to their GitHub issues
+  (`gh issue edit <n> --body-file …`), which the epic did not call out: an
+  implementer reads `#19`–`#27`, not the `.md`, so a repair that stops at disk
+  never reaches them.
+  See [issues/index.md](epic-0-issue-set-repairs/issues/index.md).
+
 ## 2026-08-16
 
 * **Epic 0 created**: [Repair the Epic 1 issue set before
