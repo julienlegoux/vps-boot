@@ -170,6 +170,9 @@ goes to stdout and command substitution would capture it.
 | `bun`, `pnpm`, `claude`, `opencode`, `codex`, `gemini`, `pi`, `vercel`, `neon` | npm registry, global installs (`bun`, `pnpm`, `@anthropic-ai/claude-code`, `opencode-ai`, `@openai/codex`, `@google/gemini-cli`, `@earendil-works/pi-coding-agent`, `vercel`, `neonctl`) |
 | `python` | `ppa:deadsnakes/ppa` |
 | `go` | `go.dev/VERSION?m=text` then the matching tarball into `/usr/local` |
+| `java` | `apt`, probed descending for the newest installable LTS `openjdk-NN-jdk-headless` |
+| `rust` | `sh.rustup.rs`, piped to `sh` with `RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo -y --no-modify-path` |
+| `uv` | `astral.sh/uv/install.sh`, piped to `sh` with `UV_INSTALL_DIR=/usr/local/bin` |
 | `hermes` | NousResearch `install.sh` from GitHub raw, piped to `bash` |
 | `hostinger` | GitHub releases API (`hostinger/api-cli`), architecture-matched tarball verified against the release's `checksums.sha256` before installing to `/usr/local/bin` |
 | `herdr` | `herdr.dev/install.sh`, piped to `sh` with `HERDR_INSTALL_DIR=/usr/local/bin` |

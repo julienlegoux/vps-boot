@@ -700,6 +700,97 @@ check_go() {
 
 register go "Go" "latest Go via go.dev" 1 system languages install_go check_go
 
+# ─── java ──────────────────────────────────────────────────
+# Probe descending for the newest installable *LTS* openjdk-NN-jdk-headless,
+# split out from install_java so the filter can be exercised without a
+# privileged filesystem write. This borrows install_python's --dry-run
+# probing idiom, but restricted to LTS majors: since Java 17 the LTS cadence
+# is every four feature releases (two years), so 17/21/25/29/33/... are
+# exactly the LTS majors, satisfying (n - 21) % 4 == 0. Without the filter,
+# "newest installable" and "newest LTS" only coincide today by accident of
+# Ubuntu's backport policy (noble ships only LTS JDKs: 17/21/25, not
+# 22/23/24/26) — Ubuntu does package feature releases into interim distros,
+# and a six-month feature release on a box meant to run unattended is the
+# wrong default. default-jdk (21 on noble) is one LTS behind for the same
+# reason: "default", "newest" and "newest LTS" are three different versions
+# for Java, unlike go/python where they collapse into one.
+probe_java_lts_jdk() {
+  local n
+  for (( n = 40; n >= 17; n-- )); do
+    (( (n - 21) % 4 == 0 )) || continue
+    apt install -y --dry-run "openjdk-${n}-jdk-headless" >/dev/null 2>&1 || continue
+    printf 'openjdk-%s-jdk-headless\n' "$n"
+    return 0
+  done
+  return 1
+}
+
+install_java() {
+  local jdk n
+  jdk=$(probe_java_lts_jdk) || { echo "no installable LTS JDK found" >&2; return 1; }
+  n=${jdk#openjdk-}
+  n=${n%-jdk-headless}
+  apt install -y "$jdk"
+
+  # apt-installed OpenJDK lands at this well-known update-alternatives path;
+  # deriving JAVA_HOME from it (rather than from `command -v javac`) keeps
+  # the drop-in correct even though /usr/bin isn't re-resolved mid-process.
+  local java_home
+  java_home="/usr/lib/jvm/java-${n}-openjdk-$(dpkg --print-architecture)"
+  printf 'export JAVA_HOME=%s\n' "$java_home" > /etc/profile.d/java.sh
+  chmod 644 /etc/profile.d/java.sh
+}
+
+check_java() {
+  # A JRE-only box would pass a naive `command -v java`; assert javac too.
+  if command -v java >/dev/null 2>&1 && command -v javac >/dev/null 2>&1; then
+    local v
+    # java -version writes its output to stderr, not stdout.
+    v=$(java -version 2>&1 | head -1 | grep -oP '"\K[^"]+' || echo "?")
+    ok "java $v"
+  else
+    ko "java/javac not installed"
+  fi
+}
+
+register java "Java (JDK)" "newest installable LTS OpenJDK" 1 system languages install_java check_java
+
+# ─── rust ──────────────────────────────────────────────────
+install_rust() {
+  # Bare `rustup` is interactive (prints a menu and waits); a prompt inside
+  # step_run hangs the run silently since stdout is redirected to the log.
+  # -y --no-modify-path plus pinned RUSTUP_HOME/CARGO_HOME is the
+  # containerised-Rust recipe: system-wide install, no PATH edit, no shell rc
+  # mutation — the profile.d drop-in below does that instead, so it works for
+  # root and any created user alike.
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
+      sh -s -- -y --no-modify-path
+
+  cat > /etc/profile.d/rust.sh <<'PROFILE'
+export RUSTUP_HOME=/usr/local/rustup
+export CARGO_HOME=/usr/local/cargo
+export PATH=$PATH:/usr/local/cargo/bin
+PROFILE
+  chmod 644 /etc/profile.d/rust.sh
+}
+
+check_rust() {
+  # /usr/local/cargo/bin isn't on this process's PATH until profile.d is
+  # sourced by a fresh login shell, so check against the pinned install dir
+  # directly — the same reason check_go uses an absolute path.
+  if [ -x /usr/local/cargo/bin/rustc ] && [ -x /usr/local/cargo/bin/cargo ]; then
+    local rv cv
+    rv=$(/usr/local/cargo/bin/rustc --version 2>/dev/null | awk '{print $2}' || echo "?")
+    cv=$(/usr/local/cargo/bin/cargo --version 2>/dev/null | awk '{print $2}' || echo "?")
+    ok "rust $rv (cargo $cv)"
+  else
+    ko "rust not installed"
+  fi
+}
+
+register rust "Rust" "rustup toolchain (rustc, cargo)" 1 system languages install_rust check_rust
+
 # ══ packaging ═════════════════════════════════════════════
 
 # ─── bun ───────────────────────────────────────────────────
@@ -735,6 +826,26 @@ check_pnpm() {
 }
 
 register pnpm "pnpm" "fast npm-compatible package manager" 1 system packaging install_pnpm check_pnpm
+
+# ─── uv ────────────────────────────────────────────────────
+install_uv() {
+  # Upstream defaults to $HOME/.local/bin, not on PATH for a fresh root-only
+  # box. UV_INSTALL_DIR pins it system-wide instead, mirroring
+  # install_herdr's pinned-install-dir fix.
+  curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
+}
+
+check_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    local v
+    v=$(uv --version 2>/dev/null | awk '{print $2}' || echo "?")
+    ok "uv $v"
+  else
+    ko "uv not installed"
+  fi
+}
+
+register uv "uv" "fast Python package/venv manager" 1 system packaging install_uv check_uv
 
 # ══ agents ════════════════════════════════════════════════
 
