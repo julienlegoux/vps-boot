@@ -45,10 +45,13 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | Node LTS | current Node LTS via NodeSource |
 | Bun | JavaScript runtime |
 | pnpm | fast npm-compatible package manager |
+| uv | fast Python package/venv manager |
 | Claude Code | Anthropic's `claude` CLI |
 | opencode | open-source AI coding agent |
 | Python + pip | latest Python 3 via the deadsnakes PPA |
 | Go | latest Go from go.dev |
+| Java (JDK) | newest installable LTS OpenJDK, `JAVA_HOME` via `/etc/profile.d` |
+| Rust | `rustup` toolchain (rustc, cargo), installed system-wide |
 | Hermes | NousResearch AI agent |
 | herdr | agent-aware terminal multiplexer |
 
