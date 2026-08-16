@@ -3,13 +3,14 @@ type: Issue
 title: "Add the tools component (jq, ripgrep, fd, htop, tree)"
 description: "Register a core-group tools component that apt-installs the CLI essentials and exposes fd-find's fdfind binary as fd via update-alternatives."
 tags: [epic-1]
-timestamp: 2026-08-17T11:00:00Z
+timestamp: 2026-08-17T15:00:00Z
 epic: 1
 issue: 03
 slug: tools-component
 size: S
-status: open
+status: done
 gh_issue: 21
+gh_pr: 36
 depends_on: [1]
 resource: https://github.com/julienlegoux/vps-boot/issues/21
 ---

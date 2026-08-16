@@ -16,9 +16,31 @@
   and the full `vps-boot.sh check` run are unverifiable on the Windows dev
   host, so the checksum path was proven standalone outside the repo instead.
 
+* **Epic 1 issue 05 completed**: [PR #37](https://github.com/julienlegoux/vps-boot/pull/37)
+  merged into `develop`, GitHub issue
+  [#23](https://github.com/julienlegoux/vps-boot/issues/23) closed.
+
+* **Epic 1 issue 03 completed**: [PR #36](https://github.com/julienlegoux/vps-boot/pull/36)
+  merged into `develop`, GitHub issue
+  [#21](https://github.com/julienlegoux/vps-boot/issues/21) closed.
+
+* **Epic 1 issue 05 PR opened**:
+  [PR #37](https://github.com/julienlegoux/vps-boot/pull/37) against `develop`
+  for issue [#23](https://github.com/julienlegoux/vps-boot/issues/23) —
+  `codex`, `gemini` and `pi` join the `agents` group (npm-installed, after
+  `opencode` and after `register node`), `pi` deliberately skips its
+  documented `pi.dev/install.sh` (interactive PATH prompt would hang
+  `step_run`) in favor of its npm package, and `check_claude` gains a real
+  version string — it was the only existing check reporting none. Ran
+  alongside issues 03, 04 and 06. No drift recorded; the fresh-host
+  install/verify criteria are unverifiable on the Windows dev host, covered
+  instead by a stubbed unit test for `check_claude` and grep-based structural
+  checks (register order, no `pi.dev` reference).
+
 * **Epic 1 issue 01 completed**: [PR #34](https://github.com/julienlegoux/vps-boot/pull/34)
-  merged, GitHub issue [#19](https://github.com/julienlegoux/vps-boot/issues/19)
-  closed. Unblocks issues 03–08.
+  merged into `develop`, GitHub issue
+  [#19](https://github.com/julienlegoux/vps-boot/issues/19) closed. Unblocks
+  issues 03–08.
 
 * **Epic 1 issue 02 PR opened**:
   [PR #35](https://github.com/julienlegoux/vps-boot/pull/35) against `develop`
