@@ -10,6 +10,7 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export VPS_BOOT_LOG_FILE="$TEST_ROOT/vps-boot.log"
 export VPS_BOOT_APT_LOCK_CONFIG="$TEST_ROOT/99-vps-boot-lock-timeout"
+export VPS_BOOT_UNATTENDED_UPGRADES_CONFIG="$TEST_ROOT/20auto-upgrades"
 export VPS_BOOT_SUDOERS_DIR="$TEST_ROOT/sudoers.d"
 export VPS_BOOT_SSHD_CONFIG="$TEST_ROOT/sshd_config"
 export VPS_BOOT_SSHD_DROPIN="$TEST_ROOT/sshd_config.d/00-vps-boot.conf"
@@ -88,6 +89,41 @@ test_apt_setup_failure_removes_candidate_and_final() {
   ! compgen -G "$(dirname "$VPS_BOOT_APT_LOCK_CONFIG")/.vps-boot-apt.*" >/dev/null
 }
 
+test_bl_update_installs_build_essential() {
+  grep -q 'build-essential' <<< "$(declare -f bl_update)"
+}
+
+test_bl_unattended_installs_package_and_writes_config() {
+  local apt_log="$TEST_ROOT/unattended-apt-calls"
+  local systemctl_log="$TEST_ROOT/unattended-systemctl-calls"
+  apt() { printf '%s\n' "$*" >> "$apt_log"; }
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+
+  bl_unattended || return 1
+
+  grep -q '^install -y unattended-upgrades$' "$apt_log" || return 1
+  [[ -f $VPS_BOOT_UNATTENDED_UPGRADES_CONFIG ]] || return 1
+  [[ $(stat -c '%a' "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG") == 644 ]] || return 1
+  grep -q '^APT::Periodic::Unattended-Upgrade "1";$' "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG" || return 1
+  grep -q 'security' "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG" || return 1
+  grep -q '^Unattended-Upgrade::Automatic-Reboot "false";$' "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG" || return 1
+  grep -q 'apt-daily-upgrade.timer' "$systemctl_log"
+}
+
+test_bl_unattended_cleans_candidate_after_chmod_failure() {
+  mkdir -p "$(dirname "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG")"
+  printf 'original\n' > "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG"
+  apt() { :; }
+  chmod() { return 23; }
+
+  if bl_unattended; then
+    return 1
+  fi
+
+  [[ $(cat "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG") == original ]] || return 1
+  ! compgen -G "$(dirname "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG")/.vps-boot-unattended.*" >/dev/null
+}
+
 test_configure_user_mode_skip() {
   USERNAME=someone
   USER_PASSWORD=secret
@@ -120,6 +156,7 @@ prepare_stubbed_install_flow() {
     "$@"
   }
   bl_update() { printf '%s\n' bl_update >> "$FLOW_TRACE"; }
+  bl_unattended() { printf '%s\n' bl_unattended >> "$FLOW_TRACE"; }
   bl_user() { printf '%s\n' bl_user >> "$FLOW_TRACE"; }
   bl_ufw() { printf '%s\n' bl_ufw >> "$FLOW_TRACE"; }
   bl_ssh_harden() { printf '%s\n' bl_ssh_harden >> "$FLOW_TRACE"; }
@@ -218,6 +255,41 @@ test_cmd_install_created_user_custom_flow() {
   grep -q '^bl_user$' "$FLOW_TRACE" || return 1
   grep -q '^sudo_nopasswd|' "$multiselect_log" || return 1
   [[ $(cat "$VPS_BOOT_STATE_DIR/components") == sudo_nopasswd ]]
+}
+
+test_cmd_install_runs_bl_unattended_between_update_and_user() {
+  FLOW_TRACE="$TEST_ROOT/order-flow-trace"
+  prepare_stubbed_install_flow || return 1
+  prompt_radio() {
+    local label=$1 outvar=$2 value
+    case "$label" in
+      "User account") value=create ;;
+      "Install mode") value=QuickStart ;;
+      "Continue?") value=Continue ;;
+      *) return 90 ;;
+    esac
+    printf -v "$outvar" '%s' "$value"
+  }
+  prompt_text() {
+    local label=$1 outvar=$2
+    case "$label" in
+      Username) printf -v "$outvar" '%s' alice ;;
+      "SSH port") printf -v "$outvar" '%s' 2222 ;;
+      *) return 91 ;;
+    esac
+  }
+  prompt_password() { printf -v "$2" '%s' secret; }
+  prompt_multiselect() { PROMPT_MSEL_RESULT=(); }
+
+  cmd_install "" 2222 >/dev/null || return 1
+
+  local update_line unattended_line user_line
+  update_line=$(grep -n '^bl_update$' "$FLOW_TRACE" | cut -d: -f1)
+  unattended_line=$(grep -n '^bl_unattended$' "$FLOW_TRACE" | cut -d: -f1)
+  user_line=$(grep -n '^bl_user$' "$FLOW_TRACE" | cut -d: -f1)
+  [[ -n $update_line && -n $unattended_line && -n $user_line ]] || return 1
+  (( update_line < unattended_line )) || return 1
+  (( unattended_line < user_line ))
 }
 
 test_cmd_install_failure_cleans_apt_fragment() {
@@ -630,10 +702,14 @@ run_test "stdin execution runs main" test_stdin_execution_runs_main
 run_test "step_run stops at the first failure" test_step_run_stops_at_first_failure
 run_test "APT lock timeout fragment is temporary" test_apt_lock_timeout_fragment
 run_test "APT setup failure removes candidate and final fragment" test_apt_setup_failure_removes_candidate_and_final
+run_test "bl_update installs build-essential" test_bl_update_installs_build_essential
+run_test "bl_unattended installs package and writes config" test_bl_unattended_installs_package_and_writes_config
+run_test "bl_unattended cleans candidate after chmod failure" test_bl_unattended_cleans_candidate_after_chmod_failure
 run_test "skip mode configures root" test_configure_user_mode_skip
 run_test "create mode enables user creation" test_configure_user_mode_create
 run_test "root QuickStart cmd_install flow filters user-only work" test_cmd_install_root_quickstart_flow
 run_test "created-user Custom cmd_install flow persists sudo" test_cmd_install_created_user_custom_flow
+run_test "cmd_install runs bl_unattended between update and user" test_cmd_install_runs_bl_unattended_between_update_and_user
 run_test "failed cmd_install flow cleans APT fragment" test_cmd_install_failure_cleans_apt_fragment
 run_test "cmd_install arms APT cleanup before setup" test_cmd_install_arms_cleanup_before_apt_setup
 run_test "root skips Docker group mutation" test_root_skips_docker_group_change

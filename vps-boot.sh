@@ -18,6 +18,7 @@ readonly PORT_MAX=65535
 readonly LOG_FILE="${VPS_BOOT_LOG_FILE:-/tmp/vps-boot.log}"
 readonly APT_LOCK_TIMEOUT=180
 readonly APT_LOCK_CONFIG="${VPS_BOOT_APT_LOCK_CONFIG:-/etc/apt/apt.conf.d/99-vps-boot-lock-timeout}"
+readonly UNATTENDED_UPGRADES_CONFIG="${VPS_BOOT_UNATTENDED_UPGRADES_CONFIG:-/etc/apt/apt.conf.d/20auto-upgrades}"
 readonly SUDOERS_DIR="${VPS_BOOT_SUDOERS_DIR:-/etc/sudoers.d}"
 readonly SSHD_CONFIG="${VPS_BOOT_SSHD_CONFIG:-/etc/ssh/sshd_config}"
 readonly SSHD_DROPIN="${VPS_BOOT_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-vps-boot.conf}"
@@ -768,7 +769,43 @@ bl_update() {
   apt upgrade -y
   apt install -y \
     wget gnupg lsb-release ca-certificates \
-    software-properties-common ufw fail2ban git unzip curl sudo
+    software-properties-common ufw fail2ban git unzip curl sudo \
+    build-essential
+}
+
+# bl_unattended — installs unattended-upgrades and enables automatic security
+# updates only. Automatic-Reboot stays false: rebooting an unattended host out
+# from under whatever is running on it is a decision for the operator, not a
+# default.
+bl_unattended() {
+  apt install -y unattended-upgrades
+
+  local config_dir candidate
+  config_dir=$(dirname "$UNATTENDED_UPGRADES_CONFIG")
+  install -d -m 0755 "$config_dir"
+  candidate=$(mktemp "$config_dir/.vps-boot-unattended.XXXXXX")
+  if ! cat > "$candidate" <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
+  then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! chmod 0644 "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$UNATTENDED_UPGRADES_CONFIG"; then
+    rm -f "$candidate"
+    return 1
+  fi
+
+  systemctl enable --now apt-daily-upgrade.timer >/dev/null 2>&1 || true
 }
 
 bl_user() {
@@ -1267,6 +1304,7 @@ cmd_install() {
   export DEBIAN_FRONTEND=noninteractive
 
   step_run "System update"               bl_update
+  step_run "Automatic security updates"  bl_unattended
   if (( CREATE_USER )); then
     step_run "User $USERNAME"            bl_user
   fi
@@ -1443,6 +1481,17 @@ do_check() {
     ok "sshd jail active"
   else
     ko "sshd jail not active"
+  fi
+
+  # ── unattended upgrades ──
+  if grep -q '^APT::Periodic::Unattended-Upgrade "1";$' "$UNATTENDED_UPGRADES_CONFIG" 2>/dev/null \
+     && systemctl is-active --quiet apt-daily-upgrade.timer 2>/dev/null; then
+    ok "unattended-upgrades configured, timer active"
+  else
+    ko "unattended-upgrades not configured or timer inactive"
+  fi
+  if [[ -e /var/run/reboot-required ]]; then
+    note "reboot required — a pending update needs a reboot to take effect"
   fi
 
   # ── components ──

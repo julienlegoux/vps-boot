@@ -52,9 +52,12 @@ All default to on. `COMPONENT_SCOPE` is `system` for every component except
 `hermes`, which is `user` and runs its installer through
 `sudo -u "$USERNAME" -H bash`.
 
-**Baseline.** Five functions — `bl_update`, `bl_user`, `bl_ufw`, `bl_ssh_harden`,
-`bl_fail2ban` — are mandatory, deliberately *not* registered, and invoked in a
-hardcoded order by `cmd_install` (`vps-boot.sh:1269-1275`). `bl_user` is the one
+**Baseline.** Six functions — `bl_update`, `bl_unattended`, `bl_user`, `bl_ufw`,
+`bl_ssh_harden`, `bl_fail2ban` — are mandatory, deliberately *not* registered, and
+invoked in a hardcoded order by `cmd_install` (`vps-boot.sh:1269-1275`). `bl_update`
+now also installs `build-essential`, so a compiler no longer depends on Hermes
+being selected. `bl_unattended` installs `unattended-upgrades` and enables the
+security pocket only, `Automatic-Reboot` left `false`. `bl_user` is the one
 conditional step, skipped in root-only mode.
 
 **Flows.** `main` dispatches to `cmd_install`, `cmd_check`, or `cmd_help`.
@@ -87,6 +90,7 @@ test harness can redirect them into a temp directory (`vps-boot.sh:16-25`).
 | `/etc/ssh/sshd_config.bak.<epoch>` | — | Timestamped backup taken once by `bl_ssh_harden` |
 | `/etc/sudoers.d/90-vps-boot-<user>` | `SUDOERS_DIR` | NOPASSWD rule from the `sudo_nopasswd` component |
 | `/etc/apt/apt.conf.d/99-vps-boot-lock-timeout` | `APT_LOCK_CONFIG` | `DPkg::Lock::Timeout "180"`. Transient — armed by an `EXIT` trap and removed when the run ends |
+| `/etc/apt/apt.conf.d/20auto-upgrades` | `UNATTENDED_UPGRADES_CONFIG` | Enables periodic unattended upgrades from the security pocket only; `Automatic-Reboot` left `false`. Written by `bl_unattended` and persists after the run |
 
 `/etc/sudoers.d/99-vps-boot-hermes` is a second, temporary sudoers rule written by
 `install_hermes` and removed by a `RETURN` trap. It hardcodes its path
