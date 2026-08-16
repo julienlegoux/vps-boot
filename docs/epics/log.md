@@ -2,6 +2,25 @@
 
 ## 2026-08-17
 
+* **Epic 1 issue 07 PR opened**:
+  [PR #40](https://github.com/julienlegoux/vps-boot/pull/40) against `develop`
+  for issue [#25](https://github.com/julienlegoux/vps-boot/issues/25) —
+  `caddy` joins the `infra` group before `herdr`: official apt repo install,
+  no `ufw allow` call anywhere in `install_caddy`, and `check_caddy` reports
+  the service state and, separately, whether UFW allows 80/443 — a closed
+  firewall gets a `note` (not a `ko`), so `check` still exits 0 on a
+  correctly configured box. No drift recorded. Also reconciled issue 01
+  (dependency) to `done`; its issue file and `log.md` had fallen behind
+  `issues/index.md`, which already read "done".
+
+* **Epic 1 issue 06 completed**: [PR #38](https://github.com/julienlegoux/vps-boot/pull/38)
+  merged into `develop`, GitHub issue
+  [#24](https://github.com/julienlegoux/vps-boot/issues/24) closed.
+
+* **Epic 1 issue 04 completed**: [PR #39](https://github.com/julienlegoux/vps-boot/pull/39)
+  merged into `develop`, GitHub issue
+  [#22](https://github.com/julienlegoux/vps-boot/issues/22) closed.
+
 * **Epic 1 issue 04 PR opened**: [PR #39](https://github.com/julienlegoux/vps-boot/pull/39)
   against `develop` for issue [#22](https://github.com/julienlegoux/vps-boot/issues/22)
   — java, rust and uv join the `languages` and `packaging` groups — java

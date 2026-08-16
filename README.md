@@ -60,6 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | Vercel CLI | `vercel` |
 | Neon CLI | `neonctl` |
 | Hostinger CLI | `hostinger` |
+| Caddy | web server / reverse proxy via the official apt repo; installs and enables the service but opens **no** firewall ports — `check` reports whether UFW allows 80/443 |
 | herdr | agent-aware terminal multiplexer |
 
 QuickStart selects all default components. It includes Passwordless sudo only when you create a user. With a created user, Custom shows Passwordless sudo in the same checkbox list as the other components; root-only mode filters it out.

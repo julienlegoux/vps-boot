@@ -1061,6 +1061,47 @@ register hostinger "Hostinger CLI" "manage your Hostinger account from the API" 
 
 # ══ infra ═════════════════════════════════════════════════
 
+# ─── caddy ─────────────────────────────────────────────────
+install_caddy() {
+  # Official apt repo + keyring, same shape as install_docker/install_gh.
+  # `gpg --dearmor` is required here (unlike gh's keyring): Caddy's gpg.key
+  # endpoint serves an ASCII-armored key, and the debian.deb.txt source line
+  # below references the dearmored binary keyring path by name.
+  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
+    | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  chmod go+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
+    -o /etc/apt/sources.list.d/caddy-stable.list
+  apt update -y
+  apt install -y caddy
+  # Deliberately no `ufw allow` here. `apt install caddy` starts and enables
+  # a systemd unit listening on :80, which the baseline firewall denies —
+  # that is correct behaviour for an unattended box, not a defect. Opening
+  # the port is the operator's call; check_caddy below makes the state
+  # visible so they can make it.
+}
+
+check_caddy() {
+  if systemctl is-active --quiet caddy; then
+    local v
+    v=$(caddy version 2>/dev/null | head -1 | awk '{print $1}' || echo "?")
+    ok "caddy $v"
+  else
+    ko "caddy service not active"
+  fi
+
+  local ufw_out
+  ufw_out=$(ufw status 2>/dev/null)
+  if grep -qE '^80/tcp[[:space:]]+ALLOW' <<< "$ufw_out" \
+     && grep -qE '^443/tcp[[:space:]]+ALLOW' <<< "$ufw_out"; then
+    ok "UFW allows 80/tcp and 443/tcp"
+  else
+    note "UFW denies 80/443 — run 'ufw allow 80/tcp && ufw allow 443/tcp' to expose Caddy"
+  fi
+}
+
+register caddy "Caddy" "web server / reverse proxy; opens no firewall ports" 1 system infra install_caddy check_caddy
+
 # ─── herdr ─────────────────────────────────────────────────
 install_herdr() {
   # Upstream defaults to $HOME/.local/bin, which is not on PATH for a fresh

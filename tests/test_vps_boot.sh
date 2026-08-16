@@ -812,6 +812,67 @@ test_root_lockdown_is_key_only() {
   ! sshd_root_is_key_only yes
 }
 
+test_install_caddy_never_calls_ufw() {
+  # The firewall is bl_ufw's business; install_caddy must never open a port
+  # itself. Guard the source directly so a future edit that slips in a
+  # `ufw allow` call fails loudly here instead of only in a live check.
+  declare -F install_caddy >/dev/null || return 1
+  ! grep -qi 'ufw' <<< "$(declare -f install_caddy)"
+}
+
+test_check_caddy_reports_version_and_open_ufw_as_ok() {
+  systemctl() { return 0; }
+  caddy() { printf 'v2.8.4 h1:abcdefghi\n'; }
+  ufw() {
+    printf 'Status: active\n\n'
+    printf '80/tcp                     ALLOW       Anywhere\n'
+    printf '443/tcp                    ALLOW       Anywhere\n'
+  }
+
+  # Plain redirection, not `$(...)`: command substitution forks a subshell,
+  # which would isolate check_caddy's ok()/note() counter updates away from
+  # this function — same trap the "Mock by redefining" convention warns about.
+  local outfile="$TEST_ROOT/check-caddy-ok-output"
+  PASS=0; FAIL=0; WARN=0
+  check_caddy > "$outfile"
+
+  grep -q 'v2.8.4' "$outfile" || return 1
+  (( FAIL == 0 )) || return 1
+  (( WARN == 0 )) || return 1
+  (( PASS == 2 ))
+}
+
+test_check_caddy_notes_closed_ufw_ports_without_failing() {
+  # A closed firewall on a fresh install is the correct, deliberate state —
+  # not a defect. The check must say so with `note`, and the run must still
+  # exit 0 (only FAIL trips the non-zero exit).
+  systemctl() { return 0; }
+  caddy() { printf 'v2.8.4 h1:abcdefghi\n'; }
+  ufw() { printf 'Status: active\n\n'; }
+
+  local outfile="$TEST_ROOT/check-caddy-closed-output"
+  PASS=0; FAIL=0; WARN=0
+  check_caddy > "$outfile"
+
+  grep -q 'v2.8.4' "$outfile" || return 1
+  grep -q '80' "$outfile" || return 1
+  grep -q '443' "$outfile" || return 1
+  (( FAIL == 0 )) || return 1
+  (( WARN == 1 )) || return 1
+  (( PASS == 1 ))
+}
+
+test_check_caddy_fails_when_service_not_active() {
+  systemctl() { return 1; }
+  caddy() { printf 'v2.8.4 h1:abcdefghi\n'; }
+  ufw() { printf 'Status: active\n\n'; }
+
+  PASS=0; FAIL=0; WARN=0
+  check_caddy >/dev/null
+
+  (( FAIL == 1 ))
+}
+
 test_check_claude_reports_real_version() {
   claude() { [[ ${1:-} == --version ]] && printf '1.2.3\n'; }
   PASS=0; FAIL=0; WARN=0
@@ -932,6 +993,10 @@ run_test "invalid SSH config is not reloaded" test_invalid_sshd_config_is_not_re
 run_test "SSH lockdown stops after drop-in write failure" test_lockdown_stops_when_dropin_write_fails
 run_test "effective SSH values come from sshd -T" test_sshd_effective_value_reads_sshd_T
 run_test "root lockdown is key-only" test_root_lockdown_is_key_only
+run_test "install_caddy never calls ufw" test_install_caddy_never_calls_ufw
+run_test "check_caddy reports version and open UFW ports as ok" test_check_caddy_reports_version_and_open_ufw_as_ok
+run_test "check_caddy notes closed UFW ports without failing" test_check_caddy_notes_closed_ufw_ports_without_failing
+run_test "check_caddy fails when the service is not active" test_check_caddy_fails_when_service_not_active
 run_test "check_claude reports a real version" test_check_claude_reports_real_version
 run_test "codex, gemini and pi register after node" test_agent_clis_registered_after_node
 run_test "no pi.dev installer reference remains" test_no_pi_dev_installer_reference

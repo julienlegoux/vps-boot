@@ -175,6 +175,7 @@ goes to stdout and command substitution would capture it.
 | `uv` | `astral.sh/uv/install.sh`, piped to `sh` with `UV_INSTALL_DIR=/usr/local/bin` |
 | `hermes` | NousResearch `install.sh` from GitHub raw, piped to `bash` |
 | `hostinger` | GitHub releases API (`hostinger/api-cli`), architecture-matched tarball verified against the release's `checksums.sha256` before installing to `/usr/local/bin` |
+| `caddy` | `dl.cloudsmith.io/public/caddy/stable` apt repo, keyring in `/usr/share/keyrings/`; installs and enables the service but opens no firewall ports |
 | `herdr` | `herdr.dev/install.sh`, piped to `sh` with `HERDR_INSTALL_DIR=/usr/local/bin` |
 
 `bun`, `pnpm`, `claude`, `opencode`, `codex`, `gemini`, `pi`, `vercel` and `neon`
