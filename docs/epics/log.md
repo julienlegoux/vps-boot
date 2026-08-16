@@ -13,6 +13,49 @@
   (dependency) to `done`; its issue file and `log.md` had fallen behind
   `issues/index.md`, which already read "done".
 
+* **Epic 1 issue 06 completed**: [PR #38](https://github.com/julienlegoux/vps-boot/pull/38)
+  merged into `develop`, GitHub issue
+  [#24](https://github.com/julienlegoux/vps-boot/issues/24) closed.
+
+* **Epic 1 issue 04 completed**: [PR #39](https://github.com/julienlegoux/vps-boot/pull/39)
+  merged into `develop`, GitHub issue
+  [#22](https://github.com/julienlegoux/vps-boot/issues/22) closed.
+
+* **Epic 1 issue 04 PR opened**: [PR #39](https://github.com/julienlegoux/vps-boot/pull/39)
+  against `develop` for issue [#22](https://github.com/julienlegoux/vps-boot/issues/22)
+  — java, rust and uv join the `languages` and `packaging` groups — java
+  probes descending for the newest installable *LTS* `openjdk-NN-jdk-headless`,
+  rust installs via `rustup -y --no-modify-path` with pinned
+  `RUSTUP_HOME`/`CARGO_HOME`, uv installs with `UV_INSTALL_DIR=/usr/local/bin`.
+  Each writes an `/etc/profile.d` drop-in or pins its install dir so it
+  resolves for root and a created user alike. Ran alongside issues 03, 05 and
+  06. No drift recorded; the fresh-host install/PATH-resolution criteria are
+  unverifiable on the Windows dev host, covered instead by a stubbed unit
+  test for the LTS probe (never calls apt on a non-LTS major) and grep-based
+  structural checks on the rust/uv install flags.
+
+* **Epic 1 issue 06 PR opened**:
+  [PR #38](https://github.com/julienlegoux/vps-boot/pull/38) against `develop`
+  for issue [#24](https://github.com/julienlegoux/vps-boot/issues/24) —
+  populates the `cloud` group with `vercel` and `neon` (npm `-g` installs,
+  registered after `node`) and `hostinger` (latest `hostinger/api-cli`
+  release resolved from the GitHub API, architecture-matched tarball verified
+  against the release's `checksums.sha256` before installing to
+  `/usr/local/bin`). `check_hostinger` uses the real `hostinger version`
+  subcommand rather than the issue's assumed `--version` flag, which the
+  upstream CLI does not define (verified against its `cmd/root.go`). Ran in
+  parallel with issues 03–05. No drift recorded; the fresh-Ubuntu smoke test
+  and the full `vps-boot.sh check` run are unverifiable on the Windows dev
+  host, so the checksum path was proven standalone outside the repo instead.
+
+* **Epic 1 issue 05 completed**: [PR #37](https://github.com/julienlegoux/vps-boot/pull/37)
+  merged into `develop`, GitHub issue
+  [#23](https://github.com/julienlegoux/vps-boot/issues/23) closed.
+
+* **Epic 1 issue 03 completed**: [PR #36](https://github.com/julienlegoux/vps-boot/pull/36)
+  merged into `develop`, GitHub issue
+  [#21](https://github.com/julienlegoux/vps-boot/issues/21) closed.
+
 * **Epic 1 issue 05 PR opened**:
   [PR #37](https://github.com/julienlegoux/vps-boot/pull/37) against `develop`
   for issue [#23](https://github.com/julienlegoux/vps-boot/issues/23) —

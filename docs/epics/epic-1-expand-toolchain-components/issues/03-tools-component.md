@@ -8,7 +8,7 @@ epic: 1
 issue: 03
 slug: tools-component
 size: S
-status: pr-open
+status: done
 gh_issue: 21
 gh_pr: 36
 depends_on: [1]

@@ -78,6 +78,118 @@ test_registry_entries_are_well_formed() {
   done
 }
 
+test_probe_java_lts_jdk_only_probes_lts_majors() {
+  # For Java, "newest installable" and "newest LTS" are not the same thing —
+  # the probe must only ever call apt --dry-run on LTS majors (17/21/25/29/33/...,
+  # i.e. (n - 21) % 4 == 0), never on 22/23/24/26. Simulate noble: only 25 has
+  # an installable candidate.
+  local probe_log="$TEST_ROOT/java-probe-log"
+  apt() {
+    [[ $1 == install && $3 == --dry-run ]] || return 0
+    printf '%s\n' "$4" >> "$probe_log"
+    [[ $4 == openjdk-25-jdk-headless ]]
+  }
+
+  local jdk
+  jdk=$(probe_java_lts_jdk) || return 1
+
+  [[ $jdk == openjdk-25-jdk-headless ]] || return 1
+  grep -qx 'openjdk-25-jdk-headless' "$probe_log" || return 1
+  ! grep -qxE 'openjdk-(22|23|24|26)-jdk-headless' "$probe_log"
+}
+
+test_probe_java_lts_jdk_fails_when_none_installable() {
+  apt() { return 1; }
+  ! probe_java_lts_jdk >/dev/null
+}
+
+test_check_java_reports_version_via_stderr_redirect() {
+  # java -version writes to stderr, not stdout — check_java must redirect
+  # 2>&1 or it silently reports "?".
+  command() {
+    case "$2" in
+      java | javac) return 0 ;;
+      *) builtin command "$@" ;;
+    esac
+  }
+  java() {
+    [[ $1 == -version ]] || return 1
+    printf 'openjdk version "25.0.3" 2025-09-16\n' >&2
+  }
+  PASS=0 FAIL=0
+  local out
+  out=$(check_java)
+  grep -q '✓' <<< "$out" || return 1
+  grep -q '25.0.3' <<< "$out"
+}
+
+test_check_java_fails_without_javac() {
+  # A JRE-only box (java present, javac missing) must fail, not pass on a
+  # naive `command -v java`.
+  command() {
+    case "$2" in
+      java) return 0 ;;
+      javac) return 1 ;;
+      *) builtin command "$@" ;;
+    esac
+  }
+  PASS=0 FAIL=0
+  local out
+  out=$(check_java)
+  grep -q '✗' <<< "$out"
+}
+
+test_install_rust_uses_noninteractive_pinned_flags() {
+  # Bare `rustup` is interactive and would hang step_run. -y --no-modify-path
+  # plus pinned RUSTUP_HOME/CARGO_HOME is the containerised-Rust recipe.
+  local src
+  src=$(declare -f install_rust)
+  grep -q -- '-y --no-modify-path' <<< "$src" || return 1
+  grep -q 'RUSTUP_HOME=/usr/local/rustup' <<< "$src" || return 1
+  grep -q 'CARGO_HOME=/usr/local/cargo' <<< "$src"
+}
+
+test_check_rust_reports_both_rustc_and_cargo_versions() {
+  # A half-installed toolchain where cargo is missing (but rustc is present)
+  # is the failure worth catching.
+  local src
+  src=$(declare -f check_rust)
+  grep -q 'rustc' <<< "$src" || return 1
+  grep -q 'cargo' <<< "$src" || return 1
+  grep -q '/usr/local/cargo/bin' <<< "$src"
+}
+
+test_install_uv_pins_install_dir() {
+  # Upstream defaults to $HOME/.local/bin, not on PATH for a fresh root-only
+  # box — mirrors install_herdr's pinned-install-dir fix.
+  grep -q 'UV_INSTALL_DIR=/usr/local/bin' <<< "$(declare -f install_uv)"
+}
+
+test_check_uv_reports_version() {
+  uv() {
+    [[ $1 == --version ]] || return 1
+    printf 'uv 0.9.7\n'
+  }
+  PASS=0 FAIL=0
+  local out
+  out=$(check_uv)
+  grep -q '✓' <<< "$out" || return 1
+  grep -q '0.9.7' <<< "$out"
+}
+
+test_check_uv_fails_when_missing() {
+  command() {
+    case "$2" in
+      uv) return 1 ;;
+      *) builtin command "$@" ;;
+    esac
+  }
+  PASS=0 FAIL=0
+  local out
+  out=$(check_uv)
+  grep -q '✗' <<< "$out"
+}
+
 test_step_run_stops_at_first_failure() {
   local trace="$TEST_ROOT/step-trace" rc
   failing_step() {
@@ -808,6 +920,44 @@ test_readme_documents_new_defaults() {
   grep -Eq 'Only then.*reload(s|ing)? .*ssh\.service' <<< "$enrollment_paragraph"
 }
 
+test_cloud_cli_components_registered() {
+  # vercel and neon install via npm, so they must land after node in registry
+  # order (and thus in run order too).
+  local key node_idx=-1 vercel_idx=-1 neon_idx=-1 hostinger_idx=-1 i=0
+  for key in "${COMPONENTS[@]}"; do
+    case "$key" in
+      node) node_idx=$i ;;
+      vercel) vercel_idx=$i ;;
+      neon) neon_idx=$i ;;
+      hostinger) hostinger_idx=$i ;;
+    esac
+    i=$((i + 1))
+  done
+  (( node_idx >= 0 && vercel_idx >= 0 && neon_idx >= 0 && hostinger_idx >= 0 )) || return 1
+  (( vercel_idx > node_idx )) || return 1
+  (( neon_idx > node_idx )) || return 1
+
+  [[ "${COMPONENT_GROUP[vercel]:-}" == "cloud" ]] || return 1
+  [[ "${COMPONENT_GROUP[neon]:-}" == "cloud" ]] || return 1
+  [[ "${COMPONENT_GROUP[hostinger]:-}" == "cloud" ]] || return 1
+
+  # check_neon must probe the neonctl binary (the package name), not the
+  # shorter "neon" binary that ships alongside it.
+  declare -f check_neon | grep -q 'neonctl' || return 1
+
+  # vercel's sign-in hint must avoid the interactive browser callback, which
+  # hangs on a headless box.
+  [[ "${COMPONENT_SIGNIN[vercel]:-}" == *'--no-browser'* ]] || return 1
+
+  # hostinger's token is account-wide (it can rebuild the VPS); the sign-in
+  # hint must say so.
+  [[ "${COMPONENT_SIGNIN[hostinger]:-}" == *'account-wide'* ]] || return 1
+
+  # hostinger installs from a checksum-verified tarball, never an unverified
+  # binary.
+  declare -f install_hostinger | grep -q 'sha256sum' || return 1
+}
+
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
 run_test "stdin execution runs main" test_stdin_execution_runs_main
 run_test "step_run stops at the first failure" test_step_run_stops_at_first_failure
@@ -852,6 +1002,16 @@ run_test "codex, gemini and pi register after node" test_agent_clis_registered_a
 run_test "no pi.dev installer reference remains" test_no_pi_dev_installer_reference
 run_test "README documents new defaults" test_readme_documents_new_defaults
 run_test "registry entries name real functions, scope and group" test_registry_entries_are_well_formed
+run_test "java LTS probe only probes LTS majors" test_probe_java_lts_jdk_only_probes_lts_majors
+run_test "java LTS probe fails when none installable" test_probe_java_lts_jdk_fails_when_none_installable
+run_test "check_java redirects stderr for the version string" test_check_java_reports_version_via_stderr_redirect
+run_test "check_java fails on a JRE-only box" test_check_java_fails_without_javac
+run_test "install_rust uses non-interactive pinned flags" test_install_rust_uses_noninteractive_pinned_flags
+run_test "check_rust reports both rustc and cargo" test_check_rust_reports_both_rustc_and_cargo_versions
+run_test "install_uv pins its install dir" test_install_uv_pins_install_dir
+run_test "check_uv reports its version" test_check_uv_reports_version
+run_test "check_uv fails when uv is missing" test_check_uv_fails_when_missing
+run_test "cloud CLI components are registered correctly" test_cloud_cli_components_registered
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))
