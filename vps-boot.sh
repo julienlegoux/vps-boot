@@ -799,7 +799,53 @@ selection_summary() {
   local total=${#all[@]} n=${#chosen[@]}
 
   if (( n == total )); then
-    printf 'all %d  ·  %s' "$total" "$(component_group_counts "${all[@]}")"
+    # The group counts are a list like any other, so they get the same
+    # truncation the partial path gets: keep whole "<group> <n>" segments while
+    # they fit, then "+K more", then — if even one segment overflows — the bare
+    # count. "all N" is at most 8 characters, so something always fits.
+    # "  ·  " is 5 visible chars and " · " is 3; counted, never measured,
+    # because "·" is two bytes.
+    local head="all $total"
+    local -a segs=()
+    local rest seg
+    rest=$(component_group_counts "${all[@]}")
+    while [[ -n "$rest" ]]; do
+      if [[ "$rest" == *" · "* ]]; then
+        seg="${rest%%" · "*}"
+        rest="${rest#*" · "}"
+      else
+        seg="$rest"
+        rest=""
+      fi
+      segs+=("$seg")
+    done
+    local room=$(( budget - ${#head} - 5 ))
+    local tail="" tlen=0 tshown=0 tcount=${#segs[@]}
+    local j tadd tremaining treserve
+    for ((j=0; j<tcount; j++)); do
+      seg="${segs[j]}"
+      tadd=${#seg}
+      (( tshown > 0 )) && tadd=$(( tadd + 3 ))
+      tremaining=$(( tcount - j ))
+      treserve=0
+      if (( tremaining > 1 )); then
+        # " · +K more"
+        treserve=$(( 3 + 1 + ${#tremaining} + 5 ))
+      fi
+      if (( tlen + tadd + treserve > room )); then break; fi
+      (( tshown > 0 )) && tail+=" · "
+      tail+="$seg"
+      tlen=$(( tlen + tadd ))
+      tshown=$(( tshown + 1 ))
+    done
+    if (( tshown == 0 )); then
+      printf '%s' "$head"
+      return 0
+    fi
+    if (( tshown < tcount )); then
+      tail+=" · +$(( tcount - tshown )) more"
+    fi
+    printf '%s  ·  %s' "$head" "$tail"
     return 0
   fi
 

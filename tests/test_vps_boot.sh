@@ -644,6 +644,36 @@ test_selection_summary_lists_selected_when_it_is_shorter() {
      == "1 of 5  ·  selected: Docker + Compose" ]]
 }
 
+test_selection_summary_full_never_exceeds_its_budget() {
+  # The partial path has always truncated; the full path did not, and at the
+  # real registry size it overflows. The Confirm screen's budget is
+  # `term_cols - 13`, so on an 80-column terminal it is 67 — while
+  # "all 23  ·  core 4 · languages 5 · packaging 3 · agents 6 · cloud 3 ·
+  # infra 2" is 76 visible characters. It wrapped, and the wrapped remainder
+  # carries no rail prefix.
+  local -a all=("${COMPONENTS[@]}")
+  local out
+  out=$(selection_summary 67 "${all[*]}" "${all[*]}")
+  (( $(ui_width_of "$out") <= 67 )) || return 1
+  # still says how many, still names the groups it had room for
+  grep -q "^all ${#all[@]}" <<< "$out"
+}
+
+test_selection_summary_full_keeps_every_group_when_it_fits() {
+  # Degrading is a last resort — with room, no group is dropped and no
+  # "+N more" appears.
+  local -a all=("${COMPONENTS[@]}")
+  local out
+  out=$(selection_summary 120 "${all[*]}" "${all[*]}")
+  [[ "$out" == "all ${#all[@]}  ·  $(component_group_counts "${all[@]}")" ]]
+}
+
+test_selection_summary_full_degrades_to_the_count_alone() {
+  # Narrower than even one group count: the bare count is what survives.
+  local -a all=("${COMPONENTS[@]}")
+  [[ $(selection_summary 12 "${all[*]}" "${all[*]}") == "all ${#all[@]}" ]]
+}
+
 test_selection_summary_never_exceeds_its_budget() {
   # The original defect: an unbounded ` · `-joined list wraps and the wrapped
   # remainder carries no rail prefix.
@@ -1323,6 +1353,9 @@ run_test "Install mode label names no tools" test_install_mode_label_names_no_to
 run_test "full selection summary collapses to group counts" test_selection_summary_full_collapses_to_group_counts
 run_test "partial selection summary lists skipped names" test_selection_summary_partial_lists_skipped_names
 run_test "selection summary lists the shorter half" test_selection_summary_lists_selected_when_it_is_shorter
+run_test "full selection summary never exceeds its budget" test_selection_summary_full_never_exceeds_its_budget
+run_test "full selection summary keeps every group when it fits" test_selection_summary_full_keeps_every_group_when_it_fits
+run_test "full selection summary degrades to the count alone" test_selection_summary_full_degrades_to_the_count_alone
 run_test "selection summary never exceeds its budget" test_selection_summary_never_exceeds_its_budget
 run_test "grid columns degrade on narrow terminals" test_msel_columns_degrade_on_narrow_terminals
 run_test "grid fits an 80x24 terminal" test_msel_grid_fits_an_80x24_terminal
