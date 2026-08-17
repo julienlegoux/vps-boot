@@ -1485,7 +1485,11 @@ EOF
 
 check_hermes() {
   local v
+  # "Hermes Agent v0.20.2 (2026.8.16)" — printed whole it reads
+  # "hermes Hermes Agent v0.20.2 …". Keep the field that starts with a digit
+  # or a "v".
   v=$(sudo -u "$USERNAME" -H bash -lc 'command -v hermes >/dev/null 2>&1 && hermes --version 2>/dev/null | head -1' || true)
+  v=$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^v?[0-9]+\./) { print $i; exit } }' <<< "$v")
   if [[ -n "$v" ]]; then
     ok "hermes $v"
   else

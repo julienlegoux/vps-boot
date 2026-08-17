@@ -1240,6 +1240,17 @@ test_check_claude_parses_the_upstream_version_line() {
   [[ "$out" != *'?'* ]]
 }
 
+test_check_hermes_reports_a_bare_version() {
+  # Real output: "Hermes Agent v0.20.2 (2026.8.16)" — printed whole it reads
+  # "hermes Hermes Agent v0.20.2 (2026.8.16)".
+  sudo() { printf 'Hermes Agent v0.20.2 (2026.8.16)\n'; }
+  PASS=0; FAIL=0; WARN=0
+  local outfile="$TEST_ROOT/check-hermes-output"
+  USERNAME=root check_hermes > "$outfile" 2>&1
+  grep -q 'hermes v0.20.2' "$outfile" || return 1
+  ! grep -q 'Hermes Agent' "$outfile"
+}
+
 test_check_java_prints_exactly_one_line() {
   # Real output: 'openjdk version "25.0.3" 2026-04-21' on stderr. grep -o with
   # a lookbehind matches twice — once after the opening quote and once after
@@ -1443,6 +1454,7 @@ run_test "check_caddy fails when the service is not active" test_check_caddy_fai
 run_test "check_claude reports a real version" test_check_claude_reports_real_version
 run_test "check_claude parses the upstream version line" test_check_claude_parses_the_upstream_version_line
 run_test "check_java prints exactly one line" test_check_java_prints_exactly_one_line
+run_test "check_hermes reports a bare version" test_check_hermes_reports_a_bare_version
 run_test "check_tools reports a bare tree version" test_check_tools_reports_a_bare_tree_version
 run_test "check_rust reports versions through the rustup shims" test_check_rust_reports_versions_through_the_rustup_shims
 run_test "check_rust fails when the shims cannot report" test_check_rust_fails_when_the_shims_cannot_report
