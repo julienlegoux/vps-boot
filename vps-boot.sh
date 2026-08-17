@@ -2289,7 +2289,19 @@ cmd_install() {
   # Both cleanups are armed together, before either setup step runs, so a
   # failure partway through setup (or any step after it) still restores the
   # apt timers and drops the lock-timeout fragment — see cmd_install_cleanup.
+  # HUP/INT/TERM are trapped explicitly, alongside EXIT: bash's default
+  # disposition for an untrapped fatal signal is to terminate the process
+  # immediately, bypassing the EXIT trap entirely — that gap is what stranded
+  # the apt timers stopped when an SSH connection dropped while
+  # enroll_ssh_key's prompt was waiting on /dev/tty. cmd_install_handle_signal
+  # disarms every trap before running cleanup (so its own `exit` cannot
+  # re-fire the EXIT trap and double-run cleanup) and exits with the shell's
+  # conventional 128+signum status, so the run is reported as killed, not
+  # successful.
   trap cmd_install_cleanup EXIT
+  trap 'cmd_install_handle_signal HUP'  HUP
+  trap 'cmd_install_handle_signal INT'  INT
+  trap 'cmd_install_handle_signal TERM' TERM
   stop_apt_timers
   install_apt_lock_timeout
 
@@ -2334,7 +2346,7 @@ cmd_install() {
   do_check
   restore_apt_timers
   remove_apt_lock_timeout
-  trap - EXIT
+  trap - EXIT HUP INT TERM
 }
 
 # cmd_install_cleanup — the EXIT-trap counterpart to stop_apt_timers +
@@ -2344,6 +2356,23 @@ cmd_install() {
 cmd_install_cleanup() {
   restore_apt_timers
   remove_apt_lock_timeout
+}
+
+# cmd_install_handle_signal SIGNAME — HUP/INT/TERM handler paired with the
+# EXIT trap above. Disarms every trap *first* so cmd_install_cleanup cannot
+# run twice (the `exit` below would otherwise re-fire the EXIT trap too), then
+# exits with the shell's conventional 128+signum status so a killed run is
+# unambiguously reported as failed, never as a silent success.
+cmd_install_handle_signal() {
+  local sig=$1
+  trap - EXIT HUP INT TERM
+  cmd_install_cleanup
+  case "$sig" in
+    HUP)  exit 129 ;;
+    INT)  exit 130 ;;
+    TERM) exit 143 ;;
+    *)    exit 1 ;;
+  esac
 }
 
 # ════════════════════════════════════════════════════════════════════════════
