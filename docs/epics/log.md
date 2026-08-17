@@ -2,6 +2,32 @@
 
 ## 2026-08-17
 
+* **Epic 1 issue 09 PR opened**:
+  [PR #42](https://github.com/julienlegoux/vps-boot/pull/42) against `develop`
+  for issue [#27](https://github.com/julienlegoux/vps-boot/issues/27) — the
+  epic's acceptance matrix ran against a freshly rebuilt Ubuntu 24.04.4 host,
+  root-only + Full install, inside an 80×24 pane. It turned up six defects,
+  all fixed here. `selection_summary` bounded only its partial branch, so the
+  Confirm screen's `install` line ran to 89 columns and wrapped without a rail
+  prefix; the group counts now truncate with `+K more` and degrade to the bare
+  count. Five `check_*` version parsers were written against guessed formats
+  and are now tested against the verbatim strings the tools print on Ubuntu
+  24.04 — the worst was `check_rust`, which printed `rust ? (cargo ?)` as a
+  *pass* because rustup's shims need `RUSTUP_HOME` exported to resolve a
+  toolchain at all. Standalone `check` now reports 37 passed, 0 failed,
+  1 warning, exit 0, with no `?` anywhere; the warning is `check_caddy`
+  correctly noting that UFW denies 80/443. Fifteen `vps-boot.sh:NNN` anchors
+  in `SPECS.md` were re-derived construct by construct, the counts reconciled
+  across `SPECS.md`, `README.md` and `.claude/CLAUDE.md`, and the README
+  toolchain table rebuilt in registry order with a case that keeps it there.
+  One drift record: root-only mode offers 22 of the 23 registered components,
+  because `component_is_applicable` filters `sudo_nopasswd` out by design —
+  accepted, and both numbers are now stated explicitly. Ten new cases; the
+  suite goes from 73 to 84. The created-user acceptance run is still
+  outstanding: it needs a second freshly rebuilt host. Run evidence is under
+  the epic's `verification/` folder. 939 changed lines against a predicted
+  `S`, 383 of them checked-in run evidence; flagged on the PR.
+
 * **Epic 1 issue 09 started**: branch
   `issue-09-epic-1-verification-docs` for issue
   [#27](https://github.com/julienlegoux/vps-boot/issues/27) — the epic's

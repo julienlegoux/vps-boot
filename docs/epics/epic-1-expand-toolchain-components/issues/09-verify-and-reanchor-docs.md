@@ -3,13 +3,14 @@ type: Issue
 title: "Verify the 23-component install and re-anchor the docs"
 description: "Run the epic's acceptance matrix on a fresh Ubuntu 24.04 host in both user modes, then re-anchor SPECS.md's line numbers and reconcile the component counts across README, SPECS and CLAUDE.md."
 tags: [epic-1]
-timestamp: 2026-08-17T00:35:00Z
+timestamp: 2026-08-17T01:45:00Z
 epic: 1
 issue: 09
 slug: verify-and-reanchor-docs
 size: S
-status: in-progress
+status: pr-open
 gh_issue: 27
+gh_pr: 42
 depends_on: [1, 2, 3, 4, 5, 6, 7, 8]
 resource: https://github.com/julienlegoux/vps-boot/issues/27
 ---

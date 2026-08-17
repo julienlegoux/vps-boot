@@ -8,4 +8,4 @@
 * [Add the vercel, hostinger and neon CLIs](./06-cloud-cli-components.md) - S, done ([#24](https://github.com/julienlegoux/vps-boot/issues/24), [PR #38](https://github.com/julienlegoux/vps-boot/pull/38))
 * [Add the caddy component with a UFW-aware check](./07-caddy-component.md) - S, done ([#25](https://github.com/julienlegoux/vps-boot/issues/25), [PR #40](https://github.com/julienlegoux/vps-boot/pull/40))
 * [Rework the wizard: Full install mode and grouped grid picker](./08-wizard-full-install-and-grid-picker.md) - M, done ([#26](https://github.com/julienlegoux/vps-boot/issues/26), [PR #41](https://github.com/julienlegoux/vps-boot/pull/41))
-* [Verify the 23-component install and re-anchor the docs](./09-verify-and-reanchor-docs.md) - S, in-progress ([#27](https://github.com/julienlegoux/vps-boot/issues/27))
+* [Verify the 23-component install and re-anchor the docs](./09-verify-and-reanchor-docs.md) - S, pr-open ([#27](https://github.com/julienlegoux/vps-boot/issues/27), [PR #42](https://github.com/julienlegoux/vps-boot/pull/42))
