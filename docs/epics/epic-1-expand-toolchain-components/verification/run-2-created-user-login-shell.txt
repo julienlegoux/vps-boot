@@ -1,0 +1,49 @@
+# Run 2 -- created-user mode: fresh login shell as the created user
+# ssh -p 38030 devuser@69.62.108.65 -> bash -l, so /etc/profile.d is sourced.
+
+whoami             : devuser
+login shell        : /tmp/login-probe.sh (bash -l)
+JAVA_HOME          : /usr/lib/jvm/java-25-openjdk-amd64
+RUSTUP_HOME        : /usr/local/rustup
+CARGO_HOME         : /usr/local/cargo
+profile.d drop-ins : /etc/profile.d/go.sh /etc/profile.d/java.sh /etc/profile.d/rust.sh 
+
+## the binaries issue 09 names -- each must resolve AND print a version
+  java     /usr/bin/java              openjdk version "25.0.3" 2026-04-21
+  javac    /usr/bin/javac             javac 25.0.3
+  cargo    /usr/local/cargo/bin/cargo cargo 1.97.1 (c980f4866 2026-06-30)
+  uv       /usr/local/bin/uv          uv 0.12.5 (x86_64-unknown-linux-gnu)
+  fd       /usr/local/bin/fd          fdfind 9.0.0
+  go       /usr/local/go/bin/go       go version go1.26.6 linux/amd64
+  rustc    /usr/local/cargo/bin/rustc rustc 1.97.1 (8bab26f4f 2026-07-14)
+
+## every component binary, resolved on PATH
+  node       /usr/bin/node
+  npm        /usr/bin/npm
+  bun        /usr/bin/bun
+  pnpm       /usr/bin/pnpm
+  claude     /usr/bin/claude
+  opencode   /usr/bin/opencode
+  codex      /usr/bin/codex
+  gemini     /usr/bin/gemini
+  pi         /usr/bin/pi
+  vercel     /usr/bin/vercel
+  neonctl    /usr/bin/neonctl
+  hostinger  /usr/local/bin/hostinger
+  herdr      /usr/local/bin/herdr
+  hermes     /home/devuser/.local/bin/hermes
+  jq         /usr/bin/jq
+  rg         /usr/bin/rg
+  fd         /usr/local/bin/fd
+  htop       /usr/bin/htop
+  tree       /usr/bin/tree
+  docker     /usr/bin/docker
+  gh         /usr/bin/gh
+  caddy      /usr/bin/caddy
+  sudo       /usr/bin/sudo
+
+## passwordless sudo (the 23rd component, root-only mode's missing one)
+  sudo -n true          OK -- no password prompt
+
+## groups
+  devuser sudo docker

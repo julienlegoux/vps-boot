@@ -1,0 +1,132 @@
+# Run 2 -- created-user mode, Full install (user: devuser)
+# Host: fresh Ubuntu 24.04.4 LTS (69.62.108.65), 80x24 tmux pane, SSH port 38030
+# Script: vps-boot.sh @ 63be1ed (branch issue-09-epic-1-verification-docs)
+#
+# THIS RUN FAILED at Hermes, 22 of 23 components in. The cause and the fix are
+# in the commit 'fix(hermes): leave root's unreadable cwd before the user-scope
+# install' and in run-2-created-user-notes.md. Password prompt echoes are
+# suppressed by read -s, hence the blank cursors.
+# ---------------------------------------------------------------------
+
+root@srv1796116:~# clear; stty rows 24 cols 80; bash /root/vps-boot.sh install; echo VPSBOOT_EXIT=$?
+
+   ██╗   ██╗██████╗ ███████╗      ██████╗  ██████╗  ██████╗ ████████╗
+   ██║   ██║██╔══██╗██╔════╝      ██╔══██╗██╔═══██╗██╔═══██╗╚══██╔══╝
+   ██║   ██║██████╔╝███████╗█████╗██████╔╝██║   ██║██║   ██║   ██║
+   ╚██╗ ██╔╝██╔═══╝ ╚════██║╚════╝██╔══██╗██║   ██║██║   ██║   ██║
+    ╚████╔╝ ██║     ███████║      ██████╔╝╚██████╔╝╚██████╔╝   ██║
+     ╚═══╝  ╚═╝     ╚══════╝      ╚═════╝  ╚═════╝  ╚═════╝    ╚═╝
+   one-shot Ubuntu hardening + dev toolchain
+
+◇  About  ────────────────────────────────────────────────────────────
+│  vps-boot will harden SSH, set up UFW + fail2ban, and install your
+│  selected dev tools. Run as root (default) or create a sudo user.
+│
+
+◇  User account
+│  (↑/↓ to move, enter to confirm)
+│  ● skip     run everything as root (best for autonomous AI environments)
+│  ○ create   create a sudo user
+│  ○ skip     run everything as root (best for autonomous AI environments)
+│  ● create   create a sudo user
+│  ● create
+
+◇  Username
+│  › devuser
+
+◇  Password for devuser
+│  › 
+│  confirm
+│  › 
+
+◇  SSH port
+│  › 38030
+
+◇  Install mode
+│  (↑/↓ to move, enter to confirm)
+│  ● Full install   everything — 23 tools
+│              core 4 · languages 5 · packaging 3 · agents 6 · cloud 3 · infra 2
+│  ○ Custom         pick what you need
+│  ● Full install
+
+◇  Confirm  ────────────────────────────────────────────────────────────
+│  user      devuser (sudo · docker group if selected)
+│  ssh       :38030, root login off
+│  firewall  UFW — only 38030/tcp open
+│  install   all 23  ·  core 4 · languages 5 · packaging 3 · agents 6 · +2 more
+│
+
+◇  Continue?
+│  (↑/↓ to move, enter to confirm)
+│  ● Continue   run the install
+│  ○ Abort      exit without changes
+│  ● Continue
+
+◇  Installing  ────────────────────────────────────────────────────────────
+│  ◇  System update ......................... …
+│  ◆  System update ......................... ✓
+│  ◇  Automatic security updates ............ …
+│  ◆  Automatic security updates ............ ✓
+│  ◇  User devuser .......................... …
+│  ◆  User devuser .......................... ✓
+│  ◇  Firewall (UFW) ........................ …
+│  ◆  Firewall (UFW) ........................ ✓
+│  ◇  SSH hardening ......................... …
+│  ◆  SSH hardening ......................... ✓
+│  ◇  fail2ban .............................. …
+│  ◆  fail2ban .............................. ✓
+│  ◇  Passwordless sudo ..................... …
+│  ◆  Passwordless sudo ..................... ✓
+│  ◇  CLI tools ............................. …
+│  ◆  CLI tools ............................. ✓
+│  ◇  Docker + Compose ...................... …
+│  ◆  Docker + Compose ...................... ✓
+│  ◇  GitHub CLI ............................ …
+│  ◆  GitHub CLI ............................ ✓
+│  ◇  Node LTS .............................. …
+│  ◆  Node LTS .............................. ✓
+│  ◇  Python + pip .......................... …
+│  ◆  Python + pip .......................... ✓
+│  ◇  Go .................................... …
+│  ◆  Go .................................... ✓
+│  ◇  Java (JDK) ............................ …
+│  ◆  Java (JDK) ............................ ✓
+│  ◇  Rust .................................. …
+│  ◆  Rust .................................. ✓
+│  ◇  Bun ................................... …
+│  ◆  Bun ................................... ✓
+│  ◇  pnpm .................................. …
+│  ◆  pnpm .................................. ✓
+│  ◇  uv .................................... …
+│  ◆  uv .................................... ✓
+│  ◇  Claude Code ........................... …
+│  ◆  Claude Code ........................... ✓
+│  ◇  opencode .............................. …
+│  ◆  opencode .............................. ✓
+│  ◇  Codex ................................. …
+│  ◆  Codex ................................. ✓
+│  ◇  Gemini CLI ............................ …
+│  ◆  Gemini CLI ............................ ✓
+│  ◇  pi .................................... …
+│  ◆  pi .................................... ✓
+│  ◇  Hermes ................................ …
+│  ◆  Hermes ................................ ✗
+│  
+│  step failed (exit 2) — last 15 lines from /tmp/vps-boot.log:
+│  │ ├─────────────────────────────────────────────────────────┤
+│  │ │  An open source AI agent by Nous Research.              │
+│  │ └─────────────────────────────────────────────────────────┘
+│  │ 
+│  │ ✓ Detected: linux (ubuntu)
+│  │ → Installing managed uv into /home/devuser/.hermes/bin ...
+│  │ ✓ Managed uv installed (uv 0.12.5 (x86_64-unknown-linux-gnu))
+│  │ → Checking Python 3.11...
+│  │ → Python 3.11 not found, installing via uv...
+│  │ Downloading cpython-3.11.16-linux-x86_64-gnu (download) (29.5MiB)
+│  │  Downloaded cpython-3.11.16-linux-x86_64-gnu (download)
+│  │ Installed Python 3.11.16 in 1.31s
+│  │  + cpython-3.11.16-linux-x86_64-gnu (python3.11)
+│  │ warning: `/home/devuser/.local/bin` is not on your PATH. To use installed Python executables, run `export PATH="/home/devuser/.local/bin:$PATH"` or `uv python update-shell`.
+│  │ error: failed to query metadata of symlink `/root/.venv`: Permission denied (os error 13)
+VPSBOOT_EXIT=2
+root@srv1796116:~# 

@@ -1,0 +1,182 @@
+# Run 1 -- root-only mode, Full install
+# Host: fresh Ubuntu 24.04.4 LTS (69.62.108.65), 80x24 tmux pane
+# Script: vps-boot.sh @ 65e26ea (branch issue-09-epic-1-verification-docs)
+# Captured with tmux pipe-pane; ANSI escapes stripped, so the wizard's
+# in-place redraws appear as repeated blocks.
+# ---------------------------------------------------------------------
+
+root@srv1796116:~# clear; stty rows 24 cols 80; bash /root/vps-boot.sh install; echo VPSBOOT_EXIT=$?
+
+   ██╗   ██╗██████╗ ███████╗      ██████╗  ██████╗  ██████╗ ████████╗
+   ██║   ██║██╔══██╗██╔════╝      ██╔══██╗██╔═══██╗██╔═══██╗╚══██╔══╝
+   ██║   ██║██████╔╝███████╗█████╗██████╔╝██║   ██║██║   ██║   ██║
+   ╚██╗ ██╔╝██╔═══╝ ╚════██║╚════╝██╔══██╗██║   ██║██║   ██║   ██║
+    ╚████╔╝ ██║     ███████║      ██████╔╝╚██████╔╝╚██████╔╝   ██║
+     ╚═══╝  ╚═╝     ╚══════╝      ╚═════╝  ╚═════╝  ╚═════╝    ╚═╝
+   one-shot Ubuntu hardening + dev toolchain
+
+◇  About  ────────────────────────────────────────────────────────────
+│  vps-boot will harden SSH, set up UFW + fail2ban, and install your
+│  selected dev tools. Run as root (default) or create a sudo user.
+│
+
+◇  User account
+│  (↑/↓ to move, enter to confirm)
+│  ● skip     run everything as root (best for autonomous AI environments)
+│  ○ create   create a sudo user
+│  ● skip
+
+◇  SSH port
+│  › 24617
+
+◇  Install mode
+│  (↑/↓ to move, enter to confirm)
+│  ● Full install   everything — 22 tools
+│              core 3 · languages 5 · packaging 3 · agents 6 · cloud 3 · infra 2
+│  ○ Custom         pick what you need
+│  ● Full install
+
+◇  Confirm  ────────────────────────────────────────────────────────────
+│  user      root (no sudo user)
+│  ssh       :24617, root login on until key lockdown
+│  firewall  UFW — only 24617/tcp open
+│  install   all 22  ·  core 3 · languages 5 · packaging 3 · agents 6 · +2 more
+│
+
+◇  Continue?
+│  (↑/↓ to move, enter to confirm)
+│  ● Continue   run the install
+│  ○ Abort      exit without changes
+│  ● Continue
+
+◇  Installing  ────────────────────────────────────────────────────────────
+│  ◇  System update ......................... …
+│  ◆  System update ......................... ✓
+│  ◇  Automatic security updates ............ …
+│  ◆  Automatic security updates ............ ✓
+│  ◇  Firewall (UFW) ........................ …
+│  ◆  Firewall (UFW) ........................ ✓
+│  ◇  SSH hardening ......................... …
+│  ◆  SSH hardening ......................... ✓
+│  ◇  fail2ban .............................. …
+│  ◆  fail2ban .............................. ✓
+│  ◇  CLI tools ............................. …
+│  ◆  CLI tools ............................. ✓
+│  ◇  Docker + Compose ...................... …
+│  ◆  Docker + Compose ...................... ✓
+│  ◇  GitHub CLI ............................ …
+│  ◆  GitHub CLI ............................ ✓
+│  ◇  Node LTS .............................. …
+│  ◆  Node LTS .............................. ✓
+│  ◇  Python + pip .......................... …
+│  ◆  Python + pip .......................... ✓
+│  ◇  Go .................................... …
+│  ◆  Go .................................... ✓
+│  ◇  Java (JDK) ............................ …
+│  ◆  Java (JDK) ............................ ✓
+│  ◇  Rust .................................. …
+│  ◆  Rust .................................. ✓
+│  ◇  Bun ................................... …
+│  ◆  Bun ................................... ✓
+│  ◇  pnpm .................................. …
+│  ◆  pnpm .................................. ✓
+│  ◇  uv .................................... …
+│  ◆  uv .................................... ✓
+│  ◇  Claude Code ........................... …
+│  ◆  Claude Code ........................... ✓
+│  ◇  opencode .............................. …
+│  ◆  opencode .............................. ✓
+│  ◇  Codex ................................. …
+│  ◆  Codex ................................. ✓
+│  ◇  Gemini CLI ............................ …
+│  ◆  Gemini CLI ............................ ✓
+│  ◇  pi .................................... …
+│  ◆  pi .................................... ✓
+│  ◇  Hermes ................................ …
+│  ◆  Hermes ................................ ✓
+│  ◇  Vercel CLI ............................ …
+│  ◆  Vercel CLI ............................ ✓
+│  ◇  Neon CLI .............................. …
+│  ◆  Neon CLI .............................. ✓
+│  ◇  Hostinger CLI ......................... …
+│  ◆  Hostinger CLI ......................... ✓
+│  ◇  Caddy ................................. …
+│  ◆  Caddy ................................. ✓
+│  ◇  herdr ................................. …
+│  ◆  herdr ................................. ✓
+
+◇  Almost done — enroll your SSH key  ─────────────────────────────────────────
+│  
+│  Linux / macOS:
+│    ssh-copy-id -p 24617 root@69.62.108.65
+│  
+│  Windows (PowerShell):
+│    type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh -p 24617 root@69.62.108.65 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+│  
+│  Verify in a NEW terminal:
+│    ssh -p 24617 root@69.62.108.65
+│
+
+◇  What now?
+│  (↑/↓ to move, enter to confirm)
+│  ● ok     lock down — disable password auth (key must already be on the server)
+│  ○ skip   keep password auth on, lock down later
+│  ● ok
+
+◇  Verify  ────────────────────────────────────────────────────────────
+│  ✓  root account selected (no sudo user)
+│  ✓  sshd listening on 24617
+│  ✓  port 22 closed
+│  ✓  root login restricted to SSH keys
+│  ✓  ssh.socket masked/inactive
+│  ✓  ssh.service active
+│  ✓  sshd config valid
+│  ✓  password auth disabled
+│  ✓  1 SSH key(s) enrolled for root
+│  ✓  UFW active
+│  ✓  24617/tcp allowed
+│  ✓  fail2ban running
+│  ✓  sshd jail active
+│  ✓  unattended-upgrades configured, timer active
+│  ✓  tools: jq jq-1.7 rg 14.1.0 fd fdfind 9.0.0 htop htop 3.3.0 tree tree v2.1.1 © 1996 - 2023 by Steve Baker, Thomas Moore, Francesc Rocher, Florian Sesser, Kyosuke Tokoro
+│  ✓  docker 29.7.2 · compose v5.4.0
+│  ✓  gh 2.97.0
+│  ✓  node v24.19.0
+│  ✓  python 3.15.0rc1
+│  ✓  pip 26.2
+│  ✓  go go1.26.6
+│  ✓  java 25.0.3
+ 2026-04-21
+│  ✓  rust ? (cargo ?)
+│  ✓  bun 1.3.14
+│  ✓  pnpm 11.22.0
+│  ✓  uv 0.12.5
+│  ✓  claude Code)
+│  ✓  opencode 1.18.18
+│  ✓  codex 0.147.0
+│  ✓  gemini 0.55.1
+│  ✓  pi 0.84.2
+│  ✓  hermes Hermes Agent v0.20.2 (2026.8.16)
+│  ✓  vercel 59.1.3
+│  ✓  neonctl 3.5.0
+│  ✓  hostinger 3.15.7
+│  ✓  caddy v2.11.4
+│  !  UFW denies 80/443 — run 'ufw allow 80/tcp && ufw allow 443/tcp' to expose Caddy
+│  ✓  herdr 0.8.0
+│
+
+◆  Done — 37 passed, 0 failed, 1 warning(s)
+│  
+│  Connect:  ssh -p 24617 root@69.62.108.65
+│  Sign in:  gh auth login            (paste the one-time code in your browser)
+│            claude                   (first run opens the OAuth browser flow)
+│            opencode auth login      (pick a provider and paste its API key)
+│            codex                    (first run opens the OAuth browser flow)
+│            gemini                   (first run opens the OAuth browser flow)
+│            pi login                 (pick a provider and paste its API key)
+│            hermes setup             (configure LLM provider and API keys)
+│            vercel login --no-browser (bare login waits on a browser callback and hangs headless)
+│            edit ~/.hostinger.yaml   (api_token is account-wide — it can rebuild your VPS)
+
+VPSBOOT_EXIT=0
+root@srv1796116:~# clear; 

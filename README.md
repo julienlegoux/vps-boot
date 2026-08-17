@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 - **Root-only by default** — skip user creation for autonomous environments without sudo prompts, or create a non-root sudo user when you want one.
 - **Hardened SSH** — UFW exposes only the selected SSH port, fail2ban protects it, and key enrollment finishes by disabling both password authentication methods.
 - **Reliable package setup** — APT waits at most three minutes for background package locks instead of failing immediately during unattended upgrades.
-- **Batteries-included dev toolchain** — choose every default (QuickStart) or select individual components (Custom).
+- **Batteries-included dev toolchain** — choose every default (Full install) or pick components from a grouped grid (Custom).
 - **Modular** — the wizard and verifier discover components from the same registry.
 
 ## What you get
@@ -28,28 +28,47 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 
 | Step | Notes |
 |---|---|
-| System update | `apt update && upgrade` plus base packages; package locks wait up to 180 seconds |
+| System update | `apt update && upgrade` plus base packages, including `build-essential`; package locks wait up to 180 seconds |
+| Automatic security updates | `unattended-upgrades` applies the security pocket only; `Automatic-Reboot` stays `false` |
 | User | optional; skipped for the default root-only setup, otherwise creates a password-backed sudo user |
 | Firewall (UFW) | deny incoming; allow only `<your-port>/tcp`; close the default SSH port `:22` unless you select port 22 |
 | SSH hardening | custom port, managed drop-in, and a timestamped backup of `sshd_config` |
 | fail2ban | sshd jail; 1h ban; 5 retries in 10 minutes |
 
-### Toolchain — toggleable in Custom mode
+### Toolchain — 23 components, toggleable in Custom mode
 
-| Tool | What it is |
-|---|---|
-| Passwordless sudo | `NOPASSWD` sudo rule for a created user; not applicable to root-only installs |
-| Docker + Compose | Docker CE, buildx, and the Compose plugin |
-| GitHub CLI | `gh` |
-| Node LTS | current Node LTS via NodeSource |
-| Bun | JavaScript runtime |
-| Claude Code | Anthropic's `claude` CLI |
-| Python + pip | latest Python 3 via the deadsnakes PPA |
-| Go | latest Go from go.dev |
-| Hermes | NousResearch AI agent |
-| tmux | terminal multiplexer |
+Listed in registry order, which is also install order. The groups are the six
+`COMPONENT_GROUPS` values and the order the picker lays them out in.
 
-QuickStart selects all default components. It includes Passwordless sudo only when you create a user. With a created user, Custom shows Passwordless sudo in the same checkbox list as the other components; root-only mode filters it out.
+| Group | Tool | What it is |
+|---|---|---|
+| core | Passwordless sudo | `NOPASSWD` sudo rule for a created user; not applicable to root-only installs |
+| core | CLI tools | `jq`, `ripgrep`, `fd`, `htop`, `tree` |
+| core | Docker + Compose | Docker CE, buildx, and the Compose plugin |
+| core | GitHub CLI | `gh` |
+| languages | Node LTS | current Node LTS via NodeSource |
+| languages | Python + pip | latest Python 3 via the deadsnakes PPA |
+| languages | Go | latest Go from go.dev |
+| languages | Java (JDK) | newest installable LTS OpenJDK, `JAVA_HOME` via `/etc/profile.d` |
+| languages | Rust | `rustup` toolchain (rustc, cargo), installed system-wide; `RUSTUP_HOME`, `CARGO_HOME` and `PATH` via `/etc/profile.d` |
+| packaging | Bun | JavaScript runtime |
+| packaging | pnpm | fast npm-compatible package manager |
+| packaging | uv | fast Python package/venv manager |
+| agents | Claude Code | Anthropic's `claude` CLI |
+| agents | opencode | open-source AI coding agent |
+| agents | Codex | OpenAI's CLI coding agent |
+| agents | Gemini CLI | Google's CLI coding agent |
+| agents | pi | Earendil's CLI coding agent |
+| agents | Hermes | NousResearch AI agent |
+| cloud | Vercel CLI | `vercel` |
+| cloud | Neon CLI | `neonctl` |
+| cloud | Hostinger CLI | `hostinger` |
+| infra | Caddy | web server / reverse proxy via the official apt repo; installs and enables the service but opens **no** firewall ports — `check` reports whether UFW allows 80/443 |
+| infra | herdr | agent-aware terminal multiplexer |
+
+Full install selects all default components. It includes Passwordless sudo only when you create a user, so it installs all 23 in that mode and 22 in root-only mode. With a created user, Custom shows Passwordless sudo in the same checkbox grid as the other components; root-only mode filters it out. The mode's label and its per-group counts are computed from the registry, so they never go stale — root-only reads `everything — 22 tools` over `core 3 · languages 5 · packaging 3 · agents 6 · cloud 3 · infra 2`.
+
+Custom opens a grouped grid rather than a flat list — components sit under their group (`core`, `languages`, `packaging`, `agents`, `cloud`, `infra`) in up to three columns, which keeps the whole picker on an 80×24 screen. Move with `↑↓←→` (or `hjkl`), toggle with space, `a` ticks everything, `n` unticks everything, enter confirms. There is no separate "baseline only" mode: Custom then `n` is the two-keystroke equivalent. On a narrow terminal the grid drops to two columns, then one.
 
 ## Usage
 
@@ -67,8 +86,8 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot
 ◇    Username      › julien
 ◇    Password      › ********
 ◇  SSH port        › 47829     (random, editable)
-◇  Install mode    ● QuickStart   ○ Custom
-◇  Components      (Custom only — checkbox list)
+◇  Install mode    ● Full install   ○ Custom
+◇  Components      (Custom only — grouped checkbox grid)
 ◇  Continue?       ● Continue     ○ Abort
 ```
 
