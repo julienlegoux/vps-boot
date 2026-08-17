@@ -2,6 +2,18 @@
 
 ## 2026-08-17
 
+* **Epic 1 issue 09 started**: branch
+  `issue-09-epic-1-verification-docs` for issue
+  [#27](https://github.com/julienlegoux/vps-boot/issues/27) — the epic's
+  closing sweep: run the acceptance matrix on a fresh Ubuntu 24.04 host in
+  both user modes, then re-anchor `docs/planning/SPECS.md` and reconcile the
+  component counts across `README.md`, `SPECS.md` and `.claude/CLAUDE.md`.
+  Also reconciled issue 08 to `done`.
+
+* **Epic 1 issue 08 completed**: [PR #41](https://github.com/julienlegoux/vps-boot/pull/41)
+  merged into `develop`, GitHub issue
+  [#26](https://github.com/julienlegoux/vps-boot/issues/26) closed.
+
 * **Epic 1 issue 08 PR opened**:
   [PR #41](https://github.com/julienlegoux/vps-boot/pull/41) against `develop`
   for issue [#26](https://github.com/julienlegoux/vps-boot/issues/26) —
