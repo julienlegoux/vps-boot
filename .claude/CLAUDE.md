@@ -7,7 +7,7 @@ Single-file bash bootstrap for fresh Ubuntu LTS VPSes. `vps-boot.sh install` run
 `vps-boot.sh` is read top to bottom:
 
 1. **Header & `set -euo pipefail`**
-2. **Constants** — port range, log path, APT lock timeout, sudoers/sshd/state paths (all env-overridable for tests), ANSI colors
+2. **Constants** — port range, log path, APT lock timeout, sudoers/sshd/state paths, the system-wide `RUSTUP_HOME_DIR` / `CARGO_HOME_DIR` (all env-overridable for tests), ANSI colors
 3. **UI library** — `term_cols` / `term_lines` / `vis_len`, `banner`, `section`, `rail`, `body`, `done_section`, `step_run`, `ok` / `ko` / `note`, `die`, `warn`, `prompt_text`, `prompt_password`, `prompt_radio`, and the grouped grid picker (`prompt_multiselect` plus its `msel_*` helpers). All reads go through `< /dev/tty` so `curl | sudo bash` works.
 4. **Component registry** — `COMPONENT_GROUPS` (the six group names, in order) + `register()` + parallel associative arrays (`COMPONENT_NAME`, `COMPONENT_DESC`, `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_GROUP`, `COMPONENT_INSTALL`, `COMPONENT_CHECK`, `COMPONENT_SIGNIN`)
 5. **Components** — one block per tool (`install_xxx`, `check_xxx`, `register xxx …`), laid out under one `# ══ <group> ══` banner per group. Order = run order.
@@ -54,11 +54,14 @@ register btop "btop" "process viewer" 1 system core install_btop check_btop
 
 That's it. The wizard's Custom picker places it in its group's row automatically, the `Full install` label's count and per-group counts follow from the registry, and `cmd_check` runs `check_btop`. No other plumbing.
 
+One thing the registry does *not* update: the toolchain table in `README.md`. Add the row there too, under the same group and in registry order — `test_readme_lists_every_component_in_registry_order` fails until you do.
+
 ## Conventions
 
 - **Output**: use `section`, `rail`, `body`, `step_run`, `ok`, `ko`, `note`, `die`, `warn` — never raw `echo`/`printf` for user-visible text. The visual style stays consistent if every line goes through the helpers.
 - **Widths**: read the terminal through `term_cols` / `term_lines`, never `tput` directly, and measure any string that might hold a glyph with `vis_len` — `${#s}` counts *bytes* under the C locale and every glyph here is multi-byte. Never declare a local named `width`: `term_cols` is resolved dynamically, so a same-named local shadows what a caller (or a test stub) set.
-- **Never join an unbounded list into one line.** A wrapped line loses its rail prefix and breaks the left border. `selection_summary` is the bounded renderer both summary surfaces use.
+- **Never join an unbounded list into one line.** A wrapped line loses its rail prefix and breaks the left border. `selection_summary` is the bounded renderer both summary surfaces use — *both* of its branches, the full selection included: with six groups the group-count form is 76 columns against the Confirm screen's 67-column budget.
+- **Version parsing**: never guess a tool's `--version` format, and never let `|| echo "?"` stand in for a real value — a `?` inside an `ok` is a green tick over something unverified. Run the command on a real host, paste the verbatim first line into a test stub, and parse against that. The formats that have already bitten: `openjdk version "25.0.3" 2026-04-21` (two `grep -o` matches, the date lands on a second, rail-less line), `2.1.233 (Claude Code)` (`$NF` is `Code)`), `tree v2.1.1 © 1996 - 2023 by Steve Baker, …` (a whole copyright notice), `Hermes Agent v0.20.2 (…)`, and rustup's shims, which need `RUSTUP_HOME` exported or they cannot name a toolchain at all.
 - **Reads**: every prompt redirects from `/dev/tty`. Direct `read` without that redirect breaks under `curl | sudo bash`.
 - **Errors**: `die "<msg>"` only for unrecoverable preconditions (wrong UID, bad args). Inside `install_xxx` functions, let `set -euo pipefail` handle failures — `step_run` captures the exit code, prints ✗, and dumps the last 15 log lines.
 - **Idempotency**: `install_xxx` should detect "already installed" and short-circuit when reasonable. The baseline (`bl_user` in particular) is NOT idempotent — re-running install with the same username will fail at `useradd`. Re-runs are not a supported path in this round.

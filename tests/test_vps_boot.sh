@@ -1374,6 +1374,28 @@ test_readme_documents_new_defaults() {
   grep -Eq 'Only then.*reload(s|ing)? .*ssh\.service' <<< "$enrollment_paragraph"
 }
 
+test_readme_lists_every_component_in_registry_order() {
+  # The toolchain table drifts silently — adding a `register` line does not
+  # touch README.md, and nothing else notices. Assert every component has a row,
+  # in registry order, under its own group, and that the heading's count agrees.
+  local key row prev=0
+  for key in "${COMPONENTS[@]}"; do
+    # BRE: "|" and "+" are literal, so the row can be matched as written.
+    row=$(grep -n "^| ${COMPONENT_GROUP[$key]} | ${COMPONENT_NAME[$key]} |" \
+      "$ROOT_DIR/README.md" | head -1 | cut -d: -f1)
+    if [[ -z $row ]]; then
+      printf 'README.md has no row for %s (%s)\n' "$key" "${COMPONENT_NAME[$key]}" >&2
+      return 1
+    fi
+    if (( row <= prev )); then
+      printf 'README.md row for %s is out of registry order\n' "$key" >&2
+      return 1
+    fi
+    prev=$row
+  done
+  grep -q "^### Toolchain — ${#COMPONENTS[@]} components" "$ROOT_DIR/README.md"
+}
+
 test_cloud_cli_components_registered() {
   # vercel and neon install via npm, so they must land after node in registry
   # order (and thus in run order too).
@@ -1472,6 +1494,7 @@ run_test "check_rust reports both rustc and cargo" test_check_rust_reports_both_
 run_test "install_uv pins its install dir" test_install_uv_pins_install_dir
 run_test "check_uv reports its version" test_check_uv_reports_version
 run_test "check_uv fails when uv is missing" test_check_uv_fails_when_missing
+run_test "README lists every component in registry order" test_readme_lists_every_component_in_registry_order
 run_test "cloud CLI components are registered correctly" test_cloud_cli_components_registered
 run_test "vis_len counts glyphs as one column" test_vis_len_counts_glyphs_as_one_column
 run_test "install-mode counts line fits 80 columns" test_install_mode_counts_line_fits_80_columns
