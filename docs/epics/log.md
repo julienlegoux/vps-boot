@@ -2,6 +2,10 @@
 
 ## 2026-08-17
 
+* **Epic 1 issue 07 completed**: [PR #40](https://github.com/julienlegoux/vps-boot/pull/40)
+  merged into `develop`, GitHub issue
+  [#25](https://github.com/julienlegoux/vps-boot/issues/25) closed.
+
 * **Epic 1 issue 07 PR opened**:
   [PR #40](https://github.com/julienlegoux/vps-boot/pull/40) against `develop`
   for issue [#25](https://github.com/julienlegoux/vps-boot/issues/25) —
