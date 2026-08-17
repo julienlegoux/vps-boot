@@ -2,6 +2,24 @@
 
 ## 2026-08-17
 
+* **Epic 1 closed**. All nine issues merged into `develop` and closed —
+  PRs [#34](https://github.com/julienlegoux/vps-boot/pull/34),
+  [#35](https://github.com/julienlegoux/vps-boot/pull/35),
+  [#36](https://github.com/julienlegoux/vps-boot/pull/36),
+  [#37](https://github.com/julienlegoux/vps-boot/pull/37),
+  [#38](https://github.com/julienlegoux/vps-boot/pull/38),
+  [#39](https://github.com/julienlegoux/vps-boot/pull/39),
+  [#40](https://github.com/julienlegoux/vps-boot/pull/40),
+  [#41](https://github.com/julienlegoux/vps-boot/pull/41),
+  [#42](https://github.com/julienlegoux/vps-boot/pull/42). Issue 09 was still
+  recorded `pr-open` while PR #42 had merged; reconciled to `done` here, along
+  with stale `status: pr-open` labels left on seven GitHub issues. Tracking issue
+  [#18](https://github.com/julienlegoux/vps-boot/issues/18) closed and milestone
+  1 closed (0 open, 18 closed). Both of the epic's drift records promoted to
+  [DRIFT.md](../planning/DRIFT.md) — accepted and resolved respectively, no open
+  work from either. Ten agent worktrees removed and their ten merged branches
+  deleted locally and on `origin`.
+
 * **Epic 1 issue 09 acceptance run 2 (created-user)**: second freshly rebuilt
   Ubuntu 24.04.4 host, user `devuser`, SSH port 38030, Full install.
   Confirmed the other half of the count run 1 established — the wizard offered

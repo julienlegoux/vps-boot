@@ -3,10 +3,10 @@ type: Epic
 title: "Expand the toolchain component registry"
 description: "Take vps-boot.sh from twelve components to twenty-three, harden the baseline with build-essential and automatic security updates, and rebuild the component picker so the list still fits a terminal."
 tags: [epic, change]
-timestamp: 2026-08-17T10:00:00Z
+timestamp: 2026-08-17T07:48:15Z
 epic: 1
 slug: expand-toolchain-components
-status: open
+status: done
 gh_issue: 18
 milestone: 1
 resource: https://github.com/julienlegoux/vps-boot/issues/18

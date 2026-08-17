@@ -13,6 +13,7 @@ clone and is kept in sync with the code it describes.
 
 * [Technical Specs](SPECS.md) - final
 * [Conventions](CONVENTIONS.md) - final
+* [Drift](DRIFT.md) - 2 entries (epic 1): 1 accepted, 1 resolved
 
 ## Ledger
 

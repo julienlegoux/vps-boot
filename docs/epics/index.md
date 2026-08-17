@@ -12,7 +12,7 @@ past — and its `source` points at the reports it consumed.
 
 ## Epics
 
-* [Epic 1: Expand the toolchain component registry](epic-1-expand-toolchain-components/EPIC_1.md) - open
+* [Epic 1: Expand the toolchain component registry](epic-1-expand-toolchain-components/EPIC_1.md) - done
 
 ## Log
 

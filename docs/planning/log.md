@@ -1,5 +1,23 @@
 # Log
 
+## 2026-08-17
+
+* **Drift register established** at [DRIFT.md](DRIFT.md), promoted from Epic 1's
+  two drift records at epic close. Both come from issue 09's acceptance runs and
+  have distinct causes, so they stay two entries. (1) *Root-only Full install
+  offers 22 of the 23 registered components* — `component_is_applicable` filters
+  `sudo_nopasswd` out when there is no non-root user to name it in, so the epic's
+  "all 23" criterion is 22 in that mode; **accepted**, with SPECS.md and README.md
+  already restated to give both numbers instead of one that is wrong in one mode.
+  (2) *The documented user-scope idiom starts in a directory the user cannot
+  read* — `sudo -u "$USERNAME" -H bash` sets `HOME` but inherits root's `/root`
+  (mode 700), and the created-user run died at Hermes on uv probing `.`;
+  **resolved (2026-08-17)**, the idiom now carries a mandatory `cd "$HOME"` in
+  both CLAUDE.md and SPECS.md and is asserted by the suite via
+  `hermes_user_script`. Neither disposition leaves open work; both revisit
+  triggers are structural (a second mode-dependent component, a second
+  `user`-scope component).
+
 ## 2026-08-16 — change 1, decision 05 reopened
 
 * **[Decision 05 (Java)](/changes/change-1-expand-toolchain-components/05-java-jdk.md)
