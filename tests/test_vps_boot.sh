@@ -309,7 +309,7 @@ prepare_stubbed_install_flow() {
   rm -f "$VPS_BOOT_APT_LOCK_CONFIG"
 }
 
-test_cmd_install_root_quickstart_flow() {
+test_cmd_install_root_full_install_flow() {
   local expected="" key
   local text_log="$TEST_ROOT/root-text-prompts"
   local password_log="$TEST_ROOT/root-password-prompts"
@@ -319,7 +319,7 @@ test_cmd_install_root_quickstart_flow() {
     local label=$1 outvar=$2 value
     case "$label" in
       "User account") value=skip ;;
-      "Install mode") value=QuickStart ;;
+      "Install mode") value="Full install" ;;
       "Continue?") value=Continue ;;
       *) return 90 ;;
     esac
@@ -391,6 +391,9 @@ test_cmd_install_created_user_custom_flow() {
   [[ $(cat "$password_log") == 'Password for alice' ]] || return 1
   grep -q '^bl_user$' "$FLOW_TRACE" || return 1
   grep -q '^sudo_nopasswd|' "$multiselect_log" || return 1
+  # the option string carries the group as a fifth field, not a second channel
+  grep -qx 'docker|Docker + Compose|containers + compose plugin|1|core' "$multiselect_log" || return 1
+  grep -qx 'caddy|.*|1|infra' "$multiselect_log" || return 1
   [[ $(cat "$VPS_BOOT_STATE_DIR/components") == sudo_nopasswd ]]
 }
 
@@ -401,7 +404,7 @@ test_cmd_install_runs_bl_unattended_between_update_and_user() {
     local label=$1 outvar=$2 value
     case "$label" in
       "User account") value=create ;;
-      "Install mode") value=QuickStart ;;
+      "Install mode") value="Full install" ;;
       "Continue?") value=Continue ;;
       *) return 90 ;;
     esac
@@ -429,6 +432,35 @@ test_cmd_install_runs_bl_unattended_between_update_and_user() {
   (( unattended_line < user_line ))
 }
 
+test_cmd_install_empty_selection_runs_baseline_only() {
+  # Custom + `n` is the replacement for a third "baseline only" mode, so an
+  # empty selection must still reach Confirm and run the install.
+  FLOW_TRACE="$TEST_ROOT/empty-selection-trace"
+  prepare_stubbed_install_flow || return 1
+  local body_log="$TEST_ROOT/empty-selection-body"
+  body() { printf '%s\n' "$1" >> "$body_log"; }
+  prompt_radio() {
+    local label=$1 outvar=$2 value
+    case "$label" in
+      "User account") value=skip ;;
+      "Install mode") value=Custom ;;
+      "Continue?") value=Continue ;;
+      *) return 90 ;;
+    esac
+    printf -v "$outvar" '%s' "$value"
+  }
+  prompt_text() { printf -v "$2" '%s' 2222; }
+  prompt_password() { return 92; }
+  prompt_multiselect() { PROMPT_MSEL_RESULT=(); }
+
+  cmd_install "" 2222 >/dev/null || return 1
+
+  grep -q '^bl_fail2ban$' "$FLOW_TRACE" || return 1
+  [[ -f $VPS_BOOT_STATE_DIR/components ]] || return 1
+  [[ ! -s $VPS_BOOT_STATE_DIR/components ]] || return 1
+  grep -q 'baseline only' "$body_log"
+}
+
 test_cmd_install_failure_cleans_apt_fragment() {
   FLOW_TRACE="$TEST_ROOT/failing-flow-trace"
   prepare_stubbed_install_flow || return 1
@@ -436,7 +468,7 @@ test_cmd_install_failure_cleans_apt_fragment() {
     local label=$1 outvar=$2 value
     case "$label" in
       "User account") value=skip ;;
-      "Install mode") value=QuickStart ;;
+      "Install mode") value="Full install" ;;
       "Continue?") value=Continue ;;
       *) return 90 ;;
     esac
@@ -461,7 +493,7 @@ test_cmd_install_arms_cleanup_before_apt_setup() {
     local label=$1 outvar=$2 value
     case "$label" in
       "User account") value=skip ;;
-      "Install mode") value=QuickStart ;;
+      "Install mode") value="Full install" ;;
       "Continue?") value=Continue ;;
       *) return 90 ;;
     esac
@@ -480,6 +512,277 @@ test_cmd_install_arms_cleanup_before_apt_setup() {
 
   (( rc == 41 )) || return 1
   [[ ! -e $VPS_BOOT_APT_LOCK_CONFIG ]]
+}
+
+# ── wizard rendering helpers ────────────────────────────────────────────────
+# The grid glyphs are multi-byte; ${#s} counts bytes under the C locale, so
+# every width assertion goes through this ASCII proxy instead.
+ui_plain() {
+  local s=$1
+  s=$(printf '%s' "$s" | sed -e 's/\x1b\[[0-9;]*m//g')
+  s=${s//│/|}
+  s=${s//◇/o}
+  s=${s//◆/O}
+  s=${s//◉/@}
+  s=${s//◌/_}
+  s=${s//›/>}
+  s=${s//·/-}
+  s=${s//—/-}
+  s=${s//●/*}
+  s=${s//○/o}
+  s=${s//↑/^}
+  s=${s//↓/v}
+  s=${s//←/<}
+  s=${s//→/>}
+  printf '%s' "$s"
+}
+
+ui_width_of() {
+  local plain
+  plain=$(ui_plain "$1")
+  printf '%s' "${#plain}"
+}
+
+msel_fixture() {
+  # Bake the value into the stub rather than reading a local: term_cols is
+  # resolved dynamically, so a same-named local inside the script would shadow
+  # this one.
+  eval "term_cols() { printf '%s' ${1:-80}; }"
+  local -a opts=()
+  local key
+  for key in "${COMPONENTS[@]}"; do
+    component_is_applicable "$key" || continue
+    opts+=("${key}|${COMPONENT_NAME[$key]}|${COMPONENT_DESC[$key]}|${COMPONENT_DEFAULT[$key]}|${COMPONENT_GROUP[$key]}")
+  done
+  msel_parse "Components" "${opts[@]}" || return 1
+  msel_layout || return 1
+  msel_build
+}
+
+test_vis_len_counts_glyphs_as_one_column() {
+  # ${#s} counts bytes under the C locale; every rendering width decision
+  # depends on this helper disagreeing with it for multi-byte glyphs.
+  [[ $(vis_len "abc") == 3 ]] || return 1
+  [[ $(vis_len "│  ◉ Go") == 7 ]] || return 1
+  [[ $(vis_len "a · b") == 5 ]] || return 1
+  [[ $(vis_len "↑↓←→") == 4 ]]
+}
+
+test_install_mode_counts_line_fits_80_columns() {
+  # prompt_radio drops a continuation line it cannot fit, so a counts string
+  # that outgrew 80 columns would silently vanish from the install-mode label.
+  # "│  " + at least 2 indent + 3 gap leaves 72.
+  local counts
+  USERNAME=alice
+  counts=$(component_group_counts $(full_install_keys))
+  [[ -n $counts ]] || return 1
+  (( $(vis_len "$counts") <= 72 ))
+}
+
+test_component_group_counts_follow_group_order() {
+  # Counts render in COMPONENT_GROUPS order regardless of argument order, and
+  # empty groups are omitted entirely.
+  [[ $(component_group_counts docker node bun) == "core 1 · languages 1 · packaging 1" ]] || return 1
+  [[ $(component_group_counts bun node docker) == "core 1 · languages 1 · packaging 1" ]] || return 1
+  [[ $(component_group_counts caddy herdr) == "infra 2" ]]
+}
+
+test_full_install_keys_are_registry_computed() {
+  # The Full install label's count must come from the registry and respect
+  # component_is_applicable — root-only mode drops exactly sudo_nopasswd.
+  local root_keys created_keys
+  USERNAME=root
+  root_keys=$(full_install_keys)
+  USERNAME=alice
+  created_keys=$(full_install_keys)
+
+  local -a root_a=($root_keys) created_a=($created_keys)
+  (( ${#created_a[@]} - ${#root_a[@]} == 1 )) || return 1
+  grep -qw sudo_nopasswd <<< "$created_keys" || return 1
+  ! grep -qw sudo_nopasswd <<< "$root_keys" || return 1
+
+  # Independently recompute the per-group counts from the registry.
+  local g expected="" c key
+  for g in "${COMPONENT_GROUPS[@]}"; do
+    c=0
+    for key in "${created_a[@]}"; do
+      [[ ${COMPONENT_GROUP[$key]} == "$g" ]] && c=$((c + 1))
+    done
+    (( c == 0 )) && continue
+    [[ -n $expected ]] && expected+=" · "
+    expected+="$g $c"
+  done
+  [[ $(component_group_counts "${created_a[@]}") == "$expected" ]]
+}
+
+test_install_mode_label_names_no_tools() {
+  # A hardcoded enumeration is exactly what rotted before. The Install mode
+  # block must not spell any component name out.
+  local block key
+  block=$(grep -n 'Install mode' -A 4 "$SCRIPT")
+  [[ -n $block ]] || return 1
+  for key in "${COMPONENTS[@]}"; do
+    (( ${#COMPONENT_NAME[$key]} >= 4 )) || continue
+    if grep -Fq "${COMPONENT_NAME[$key]}" <<< "$block"; then
+      return 1
+    fi
+  done
+  grep -q 'full_install_option' <<< "$block"
+}
+
+test_selection_summary_full_collapses_to_group_counts() {
+  [[ $(selection_summary 80 "docker gh node" "docker gh node") == "all 3  ·  core 2 · languages 1" ]]
+}
+
+test_selection_summary_partial_lists_skipped_names() {
+  [[ $(selection_summary 80 "docker gh node bun pnpm" "docker gh node") \
+     == "3 of 5  ·  skipped: Bun · pnpm" ]]
+}
+
+test_selection_summary_lists_selected_when_it_is_shorter() {
+  [[ $(selection_summary 80 "docker gh node bun pnpm" "docker") \
+     == "1 of 5  ·  selected: Docker + Compose" ]]
+}
+
+test_selection_summary_never_exceeds_its_budget() {
+  # The original defect: an unbounded ` · `-joined list wraps and the wrapped
+  # remainder carries no rail prefix.
+  local -a all=("${COMPONENTS[@]}")
+  local -a chosen=("${all[@]:0:12}")
+  local out
+  out=$(selection_summary 60 "${all[*]}" "${chosen[*]}")
+  (( $(ui_width_of "$out") <= 60 )) || return 1
+  grep -q 'more' <<< "$out"
+}
+
+test_msel_columns_degrade_on_narrow_terminals() {
+  [[ $(msel_columns 80) == 3 ]] || return 1
+  [[ $(msel_columns 60) == 2 ]] || return 1
+  [[ $(msel_columns 40) == 1 ]] || return 1
+  [[ $(msel_columns 20) == 1 ]]
+}
+
+test_msel_grid_fits_an_80x24_terminal() {
+  msel_fixture 80 || return 1
+  local line
+  for line in "${MSEL_LINES[@]}"; do
+    (( $(ui_width_of "$line") <= 80 )) || return 1
+  done
+  # 24 rows minus the shell prompt and the blank separator above the block.
+  (( ${#MSEL_LINES[@]} <= 22 )) || return 1
+  (( ${#MSEL_LINES[@]} >= 4 ))
+}
+
+test_msel_grid_degrades_to_fewer_columns_at_60() {
+  local wide narrow
+  msel_fixture 80 || return 1
+  wide=${#MSEL_LINES[@]}
+  msel_fixture 60 || return 1
+  narrow=${#MSEL_LINES[@]}
+  (( narrow > wide )) || return 1
+  local line
+  for line in "${MSEL_LINES[@]}"; do
+    (( $(ui_width_of "$line") <= 60 )) || return 1
+  done
+}
+
+test_msel_grid_groups_rows_in_registry_group_order() {
+  msel_fixture 80 || return 1
+  local line plain seen="" g
+  for line in "${MSEL_LINES[@]}"; do
+    plain=$(ui_plain "$line")
+    for g in "${COMPONENT_GROUPS[@]}"; do
+      if [[ $plain == "|  $g "* ]]; then
+        seen+="${seen:+ }$g"
+      fi
+    done
+  done
+  [[ $seen == "${COMPONENT_GROUPS[*]}" ]] || return 1
+  # The first core row carries the first three core components, in order.
+  local first_core=""
+  for line in "${MSEL_LINES[@]}"; do
+    plain=$(ui_plain "$line")
+    if [[ $plain == "|  core "* ]]; then first_core=$plain; break; fi
+  done
+  [[ $first_core == *"Passwordless sudo"*"CLI tools"*"Docker + Compose"* ]]
+}
+
+test_msel_header_counts_track_select_all_and_none() {
+  msel_fixture 80 || return 1
+  local n=${#MSEL_KEYS[@]}
+  msel_select_all
+  msel_build
+  [[ $(ui_plain "${MSEL_LINES[0]}") == *"$n selected - 0 skipped"* ]] || return 1
+  msel_select_none
+  msel_build
+  [[ $(ui_plain "${MSEL_LINES[0]}") == *"0 selected - $n skipped"* ]] || return 1
+  # and the glyphs follow — ui_plain maps ◉ to "@", which no component name uses
+  local line ticked=0
+  for line in "${MSEL_LINES[@]}"; do
+    case $(ui_plain "$line") in *@*) ticked=1 ;; esac
+  done
+  (( ticked == 0 )) || return 1
+  msel_select_all
+  msel_build
+  ticked=0
+  for line in "${MSEL_LINES[@]}"; do
+    case $(ui_plain "$line") in *@*) ticked=1 ;; esac
+  done
+  (( ticked == 1 ))
+}
+
+test_msel_navigation_is_two_dimensional() {
+  msel_fixture 80 || return 1
+  local n=${#MSEL_KEYS[@]}
+  MSEL_CURRENT=0
+  msel_right
+  (( MSEL_CURRENT == 1 )) || return 1
+  # core has 4 entries over 3 columns: row 1 holds only index 3, so a down
+  # from column 1 clamps to it rather than falling out of the group.
+  msel_down
+  (( MSEL_CURRENT == 3 )) || return 1
+  msel_up
+  (( MSEL_CURRENT == 0 )) || return 1
+  msel_left
+  (( MSEL_CURRENT == n - 1 )) || return 1
+  msel_right
+  (( MSEL_CURRENT == 0 ))
+}
+
+test_msel_redraw_count_matches_what_was_printed() {
+  # The bug this replaces: a blind `\033[<n>A` of exactly one row per option,
+  # which lands in the wrong place as soon as the block has scrolled.
+  local printed_file="$TEST_ROOT/msel-printed"
+  msel_fixture 80 || return 1
+  msel_print_all > "$printed_file"
+  local printed
+  printed=$(wc -l < "$printed_file")
+  (( printed == ${#MSEL_LINES[@]} )) || return 1
+
+  term_lines() { printf '10'; }
+  [[ $(msel_visible_rows) == 9 ]] || return 1
+  term_lines() { printf '100'; }
+  [[ $(msel_visible_rows) == "${#MSEL_LINES[@]}" ]]
+}
+
+test_msel_collect_writes_selected_keys() {
+  msel_fixture 80 || return 1
+  msel_select_none
+  MSEL_CURRENT=0
+  msel_toggle
+  msel_right
+  msel_toggle
+  msel_collect
+  [[ ${#PROMPT_MSEL_RESULT[@]} -eq 2 ]] || return 1
+  [[ ${PROMPT_MSEL_RESULT[0]} == "${MSEL_KEYS[0]}" ]] || return 1
+  [[ ${PROMPT_MSEL_RESULT[1]} == "${MSEL_KEYS[1]}" ]]
+}
+
+test_no_old_mode_name_references_remain() {
+  # Built from fragments so this assertion does not match its own source.
+  local pat="Quick""Start"
+  ! grep -rn "$pat" \
+    "$SCRIPT" "$ROOT_DIR/tests" "$ROOT_DIR/README.md" "$ROOT_DIR/docs/planning/SPECS.md"
 }
 
 test_root_skips_docker_group_change() {
@@ -902,7 +1205,7 @@ test_readme_documents_new_defaults() {
   local enrollment_paragraph
 
   grep -q 'root-only' "$ROOT_DIR/README.md" || return 1
-  grep -Eq 'QuickStart.*Passwordless sudo.*only when.*create a user' "$ROOT_DIR/README.md" || return 1
+  grep -Eq 'Full install.*Passwordless sudo.*only when.*create a user' "$ROOT_DIR/README.md" || return 1
   grep -Eq 'Custom.*Passwordless sudo.*checkbox' "$ROOT_DIR/README.md" || return 1
   grep -q 'three minutes' "$ROOT_DIR/README.md" || return 1
   grep -Eq 'final SSH lockdown.*only when.*choose.*ok.*valid key' "$ROOT_DIR/README.md" || return 1
@@ -968,7 +1271,7 @@ run_test "bl_unattended installs package and writes config" test_bl_unattended_i
 run_test "bl_unattended cleans candidate after chmod failure" test_bl_unattended_cleans_candidate_after_chmod_failure
 run_test "skip mode configures root" test_configure_user_mode_skip
 run_test "create mode enables user creation" test_configure_user_mode_create
-run_test "root QuickStart cmd_install flow filters user-only work" test_cmd_install_root_quickstart_flow
+run_test "root Full install cmd_install flow filters user-only work" test_cmd_install_root_full_install_flow
 run_test "created-user Custom cmd_install flow persists sudo" test_cmd_install_created_user_custom_flow
 run_test "cmd_install runs bl_unattended between update and user" test_cmd_install_runs_bl_unattended_between_update_and_user
 run_test "failed cmd_install flow cleans APT fragment" test_cmd_install_failure_cleans_apt_fragment
@@ -1012,6 +1315,25 @@ run_test "install_uv pins its install dir" test_install_uv_pins_install_dir
 run_test "check_uv reports its version" test_check_uv_reports_version
 run_test "check_uv fails when uv is missing" test_check_uv_fails_when_missing
 run_test "cloud CLI components are registered correctly" test_cloud_cli_components_registered
+run_test "vis_len counts glyphs as one column" test_vis_len_counts_glyphs_as_one_column
+run_test "install-mode counts line fits 80 columns" test_install_mode_counts_line_fits_80_columns
+run_test "group counts follow COMPONENT_GROUPS order" test_component_group_counts_follow_group_order
+run_test "Full install keys are computed from the registry" test_full_install_keys_are_registry_computed
+run_test "Install mode label names no tools" test_install_mode_label_names_no_tools
+run_test "full selection summary collapses to group counts" test_selection_summary_full_collapses_to_group_counts
+run_test "partial selection summary lists skipped names" test_selection_summary_partial_lists_skipped_names
+run_test "selection summary lists the shorter half" test_selection_summary_lists_selected_when_it_is_shorter
+run_test "selection summary never exceeds its budget" test_selection_summary_never_exceeds_its_budget
+run_test "grid columns degrade on narrow terminals" test_msel_columns_degrade_on_narrow_terminals
+run_test "grid fits an 80x24 terminal" test_msel_grid_fits_an_80x24_terminal
+run_test "grid degrades to fewer columns at 60" test_msel_grid_degrades_to_fewer_columns_at_60
+run_test "grid rows follow registry group order" test_msel_grid_groups_rows_in_registry_group_order
+run_test "grid header counts track a and n" test_msel_header_counts_track_select_all_and_none
+run_test "grid navigation is two-dimensional" test_msel_navigation_is_two_dimensional
+run_test "grid redraw count matches what was printed" test_msel_redraw_count_matches_what_was_printed
+run_test "grid collect writes selected keys" test_msel_collect_writes_selected_keys
+run_test "empty Custom selection runs the baseline only" test_cmd_install_empty_selection_runs_baseline_only
+run_test "no old install-mode name remains" test_no_old_mode_name_references_remain
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 (( FAIL_COUNT == 0 ))

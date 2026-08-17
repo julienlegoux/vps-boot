@@ -8,7 +8,7 @@ Single-file bash bootstrap for fresh Ubuntu LTS VPSes. `vps-boot.sh install` run
 
 1. **Header & `set -euo pipefail`**
 2. **Constants** — port range, log path, APT lock timeout, sudoers/sshd/state paths (all env-overridable for tests), ANSI colors
-3. **UI library** — `banner`, `section`, `rail`, `body`, `done_section`, `step_run`, `ok` / `ko` / `note`, `die`, `warn`, `prompt_text`, `prompt_password`, `prompt_radio`, `prompt_multiselect`. All reads go through `< /dev/tty` so `curl | sudo bash` works.
+3. **UI library** — `term_cols` / `term_lines` / `vis_len`, `banner`, `section`, `rail`, `body`, `done_section`, `step_run`, `ok` / `ko` / `note`, `die`, `warn`, `prompt_text`, `prompt_password`, `prompt_radio`, and the grouped grid picker (`prompt_multiselect` plus its `msel_*` helpers). All reads go through `< /dev/tty` so `curl | sudo bash` works.
 4. **Component registry** — `COMPONENT_GROUPS` (the six group names, in order) + `register()` + parallel associative arrays (`COMPONENT_NAME`, `COMPONENT_DESC`, `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_GROUP`, `COMPONENT_INSTALL`, `COMPONENT_CHECK`, `COMPONENT_SIGNIN`)
 5. **Components** — one block per tool (`install_xxx`, `check_xxx`, `register xxx …`), laid out under one `# ══ <group> ══` banner per group. Order = run order.
 6. **Baseline** — `bl_update`, `bl_unattended`, `bl_user`, `bl_ufw`, `bl_ssh_harden`, `bl_fail2ban`. Mandatory, NOT registered, always run in this order. Plus the `set_sshd` helper.
@@ -52,11 +52,13 @@ register btop "btop" "process viewer" 1 system core install_btop check_btop
 #   register btop "btop" "process viewer" 1 system core install_btop check_btop "btop login (opens browser)"
 ```
 
-That's it. The wizard's Custom multi-select picks it up automatically. `cmd_check` runs `check_btop` automatically. No other plumbing.
+That's it. The wizard's Custom picker places it in its group's row automatically, the `Full install` label's count and per-group counts follow from the registry, and `cmd_check` runs `check_btop`. No other plumbing.
 
 ## Conventions
 
 - **Output**: use `section`, `rail`, `body`, `step_run`, `ok`, `ko`, `note`, `die`, `warn` — never raw `echo`/`printf` for user-visible text. The visual style stays consistent if every line goes through the helpers.
+- **Widths**: read the terminal through `term_cols` / `term_lines`, never `tput` directly, and measure any string that might hold a glyph with `vis_len` — `${#s}` counts *bytes* under the C locale and every glyph here is multi-byte. Never declare a local named `width`: `term_cols` is resolved dynamically, so a same-named local shadows what a caller (or a test stub) set.
+- **Never join an unbounded list into one line.** A wrapped line loses its rail prefix and breaks the left border. `selection_summary` is the bounded renderer both summary surfaces use.
 - **Reads**: every prompt redirects from `/dev/tty`. Direct `read` without that redirect breaks under `curl | sudo bash`.
 - **Errors**: `die "<msg>"` only for unrecoverable preconditions (wrong UID, bad args). Inside `install_xxx` functions, let `set -euo pipefail` handle failures — `step_run` captures the exit code, prints ✗, and dumps the last 15 log lines.
 - **Idempotency**: `install_xxx` should detect "already installed" and short-circuit when reasonable. The baseline (`bl_user` in particular) is NOT idempotent — re-running install with the same username will fail at `useradd`. Re-runs are not a supported path in this round.

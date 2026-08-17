@@ -59,14 +59,43 @@ BANNER
   printf '   %sone-shot Ubuntu hardening + dev toolchain%s\n\n' "$C_DIM" "$C_RESET"
 }
 
+# term_cols / term_lines — terminal geometry with a sane fallback. Every
+# rendering decision (column count, cursor-up distance) goes through these so a
+# test can stub them and so a missing/odd `tput` can never produce a bad number.
+term_cols() {
+  local c
+  c=$(tput cols 2>/dev/null || echo 80)
+  [[ "$c" =~ ^[0-9]+$ ]] && (( c > 0 )) || c=80
+  printf '%s' "$c"
+}
+
+term_lines() {
+  local l
+  l=$(tput lines 2>/dev/null || echo 24)
+  [[ "$l" =~ ^[0-9]+$ ]] && (( l > 0 )) || l=24
+  printf '%s' "$l"
+}
+
+# vis_len "text" — visible column count. ${#s} counts *bytes* under the C
+# locale, and every glyph in this script's vocabulary is multi-byte, so any
+# width decision on a string that might contain one goes through here.
+vis_len() {
+  local s=$1
+  s=${s//·/.}; s=${s//—/-}; s=${s//─/-}
+  s=${s//↑/^}; s=${s//↓/v}; s=${s//←/<}; s=${s//→/>}
+  s=${s//│/|}; s=${s//◇/o}; s=${s//◆/O}
+  s=${s//◉/x}; s=${s//◌/.}; s=${s//●/*}; s=${s//○/o}; s=${s//›/>}
+  printf '%s' "${#s}"
+}
+
 # section "Title" — opens a new section with diamond + orange title + rule
 section() {
   local title=$1
-  local width
-  width=$(tput cols 2>/dev/null || echo 80)
+  local term_w
+  term_w=$(term_cols)
   local prefix_len=4   # "◇  " is 3 visible chars + 1 trailing space
   local title_len=${#title}
-  local fill=$(( width - prefix_len - title_len - 2 ))
+  local fill=$(( term_w - prefix_len - title_len - 2 ))
   (( fill < 4 )) && fill=4
   (( fill > 60 )) && fill=60
 
@@ -204,24 +233,64 @@ prompt_password() {
   printf -v "$out_var" '%s' "$pw1"
 }
 
-# prompt_radio "label" out_var "option1|desc1" "option2|desc2" ...
-# Selected option key is stored in the named variable.
+# prompt_radio "label" out_var "option1|desc1[|desc1b]" "option2|desc2" ...
+# Selected option key is stored in the named variable. An optional third field
+# renders as a dim continuation line under the description — that is how the
+# install-mode option carries its per-group counts without a second prompt.
+# Keys are padded to a common width so descriptions line up in a column.
 prompt_radio() {
   local label=$1
   local out_var=$2
   shift 2
   local -a keys=()
   local -a descs=()
-  local opt key desc
+  local -a descs2=()
+  local opt key rest desc desc2
   for opt in "$@"; do
     key=${opt%%|*}
-    desc=${opt#*|}
-    [[ "$desc" == "$opt" ]] && desc=""
+    rest=${opt#*|}
+    [[ "$rest" == "$opt" ]] && rest=""
+    desc=${rest%%|*}
+    desc2=${rest#*|}
+    [[ "$desc2" == "$rest" ]] && desc2=""
     keys+=("$key")
     descs+=("$desc")
+    descs2+=("$desc2")
   done
   local n=${#keys[@]}
   local current=0
+
+  # keyw: widest key, for the description column. rows: what _radio_draw
+  # actually prints — never assume one row per option, the continuation lines
+  # add rows and the cursor-up must match.
+  local keyw=0 i term_w
+  term_w=$(term_cols)
+  for ((i=0; i<n; i++)); do
+    if (( ${#keys[i]} > keyw )); then keyw=${#keys[i]}; fi
+  done
+
+  # Continuation lines align under the description column when there is room,
+  # slide left when there is not, and are dropped entirely when even the
+  # minimum indent would overflow — a wrapped line loses its rail prefix and
+  # breaks the left border. `rows` counts only what will actually be printed,
+  # because it is the redraw's cursor-up distance.
+  local -a indent2=()
+  local rows=0 want fits
+  for ((i=0; i<n; i++)); do
+    rows=$(( rows + 1 ))
+    want=0
+    if [[ -n "${descs2[i]}" ]]; then
+      fits=$(( term_w - 6 - $(vis_len "${descs2[i]}") ))
+      if (( fits < 2 )); then
+        descs2[i]=""
+      else
+        want=$(( keyw + 2 ))
+        (( fits < want )) && want=$fits
+        rows=$(( rows + 1 ))
+      fi
+    fi
+    indent2+=("$want")
+  done
 
   printf '\n%s◇%s  %s%s%s\n' "$C_ORANGE" "$C_RESET" "$C_BOLD" "$label" "$C_RESET"
   printf '%s│%s  %s(↑/↓ to move, enter to confirm)%s\n' "$C_DIM" "$C_RESET" "$C_DIM" "$C_RESET"
@@ -229,28 +298,34 @@ prompt_radio() {
   _radio_draw() {
     local i
     for ((i=0; i<n; i++)); do
+      printf '\033[2K'
       printf '%s│%s  ' "$C_DIM" "$C_RESET"
       if (( i == current )); then
-        printf '%s●%s %s%s%s' "$C_CYAN" "$C_RESET" "$C_BOLD" "${keys[i]}" "$C_RESET"
+        printf '%s●%s %s%-*s%s' "$C_CYAN" "$C_RESET" "$C_BOLD" "$keyw" "${keys[i]}" "$C_RESET"
       else
-        printf '%s○%s %s' "$C_DIM" "$C_RESET" "${keys[i]}"
+        printf '%s○%s %-*s' "$C_DIM" "$C_RESET" "$keyw" "${keys[i]}"
       fi
       if [[ -n "${descs[i]}" ]]; then
         printf '   %s%s%s' "$C_DIM" "${descs[i]}" "$C_RESET"
       fi
       printf '\n'
+      if [[ -n "${descs2[i]}" ]]; then
+        printf '\033[2K'
+        printf '%s│%s  %*s   %s%s%s\n' \
+          "$C_DIM" "$C_RESET" "${indent2[i]}" "" "$C_DIM" "${descs2[i]}" "$C_RESET"
+      fi
     done
   }
 
   _radio_draw
 
-  local k rest
+  local k rest2
   while :; do
     IFS= read -rsn1 k < /dev/tty || break
     case "$k" in
       $'\033')
-        IFS= read -rsn2 -t 0.05 rest < /dev/tty || rest=""
-        case "$rest" in
+        IFS= read -rsn2 -t 0.05 rest2 < /dev/tty || rest2=""
+        case "$rest2" in
           '[A') current=$(( (current - 1 + n) % n )) ;;
           '[B') current=$(( (current + 1) % n )) ;;
         esac
@@ -262,57 +337,336 @@ prompt_radio() {
       'j') current=$(( (current + 1) % n )) ;;
     esac
 
-    # redraw — move up n lines and rewrite each
-    printf '\033[%dA' "$n"
-    local i
-    for ((i=0; i<n; i++)); do
-      printf '\033[2K'
-      printf '%s│%s  ' "$C_DIM" "$C_RESET"
-      if (( i == current )); then
-        printf '%s●%s %s%s%s' "$C_CYAN" "$C_RESET" "$C_BOLD" "${keys[i]}" "$C_RESET"
-      else
-        printf '%s○%s %s' "$C_DIM" "$C_RESET" "${keys[i]}"
-      fi
-      if [[ -n "${descs[i]}" ]]; then
-        printf '   %s%s%s' "$C_DIM" "${descs[i]}" "$C_RESET"
-      fi
-      printf '\n'
-    done
+    # redraw — move up by the rows actually printed, not by the option count
+    printf '\033[%dA' "$rows"
+    _radio_draw
   done
 
   # collapse: clear hint + options, reprint just the chosen value
-  printf '\033[%dA\033[J' "$(( n + 1 ))"
+  printf '\033[%dA\033[J' "$(( rows + 1 ))"
   printf '%s│%s  %s●%s %s%s%s\n' "$C_DIM" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_BOLD" "${keys[current]}" "$C_RESET"
 
   printf -v "$out_var" '%s' "${keys[current]}"
 }
 
-# prompt_multiselect "label" out_var_array "key1|name1|desc1|default1" ...
-# default1 is 1 (checked) or 0 (unchecked).
-# Selected keys are written to the named array variable.
+# ── grouped grid multi-select ───────────────────────────────────────────────
+#
+# prompt_multiselect "label" "key|name|desc|default|group" ...
+#   default is 1 (checked) or 0 (unchecked); group is one of COMPONENT_GROUPS.
+#   Selected keys land in PROMPT_MSEL_RESULT.
+#
+# Options are laid out as a grid: the group name in a left gutter, then up to
+# three columns of `MSEL_CELL_W`. Twenty-three components become ~9 rows instead
+# of 23, which is what keeps the whole block on an 80×24 screen.
+#
+# The state lives in MSEL_* globals rather than in locals so the rendering and
+# navigation can be unit-tested without a tty. Two invariants matter:
+#   * every visible line is built into MSEL_LINES, so the redraw's cursor-up
+#     distance is the number of lines that were actually printed — never a
+#     guess of one row per option, which is what corrupted the old picker once
+#     the block outgrew the screen;
+#   * that distance is additionally clamped to the terminal height, so a block
+#     that did scroll only redraws the part still on screen.
 PROMPT_MSEL_RESULT=()
-prompt_multiselect() {
-  local label=$1
+MSEL_LABEL=""
+MSEL_KEYS=(); MSEL_NAMES=(); MSEL_DESCS=(); MSEL_SEL=(); MSEL_GROUPS=()
+MSEL_ROW_START=(); MSEL_ROW_LEN=(); MSEL_ROW_LABEL=()
+MSEL_ROW_OF=(); MSEL_COL_OF=()
+MSEL_LINES=()
+MSEL_CURRENT=0
+MSEL_COLS=3
+MSEL_GUTTER=10
+MSEL_CELL_W=21   # "›◉ Passwordless sudo " — marker + glyph + space + 17 + pad
+MSEL_CELL=21
+
+# msel_parse "label" "key|name|desc|default|group" ...
+# Fills the MSEL_* arrays in COMPONENT_GROUPS order (stable within a group), so
+# the flat index is also the display position and navigation needs no mapping.
+msel_parse() {
+  MSEL_LABEL=$1
   shift
-  local -a keys=() names=() descs=() selected=()
-  local opt key name desc def
+  MSEL_KEYS=(); MSEL_NAMES=(); MSEL_DESCS=(); MSEL_SEL=(); MSEL_GROUPS=()
+  local -a keys=() names=() descs=() defs=() groups=()
+  local opt key name desc def group
   for opt in "$@"; do
-    IFS='|' read -r key name desc def <<<"$opt"
+    IFS='|' read -r key name desc def group <<<"$opt"
     keys+=("$key")
     names+=("$name")
     descs+=("$desc")
-    selected+=("$def")
+    defs+=("${def:-0}")
+    groups+=("${group:-${COMPONENT_GROUP[$key]:-other}}")
   done
-  local n=${#keys[@]}
-  local current=0
 
-  printf '\n%s◇%s  %s%s%s\n' "$C_ORANGE" "$C_RESET" "$C_BOLD" "$label" "$C_RESET"
-  printf '%s│%s  %s(↑/↓ to move, space to toggle, enter to confirm)%s\n' "$C_DIM" "$C_RESET" "$C_DIM" "$C_RESET"
+  local g i known
+  for g in "${COMPONENT_GROUPS[@]}" "__rest__"; do
+    for ((i=0; i<${#keys[@]}; i++)); do
+      if [[ "$g" == "__rest__" ]]; then
+        known=0
+        case " ${COMPONENT_GROUPS[*]} " in *" ${groups[i]} "*) known=1 ;; esac
+        (( known )) && continue
+      elif [[ "${groups[i]}" != "$g" ]]; then
+        continue
+      fi
+      MSEL_KEYS+=("${keys[i]}")
+      MSEL_NAMES+=("${names[i]}")
+      MSEL_DESCS+=("${descs[i]}")
+      MSEL_SEL+=("${defs[i]}")
+      MSEL_GROUPS+=("${groups[i]}")
+    done
+  done
+  MSEL_CURRENT=0
+  return 0
+}
 
-  local i
+# msel_columns <width> — how many component columns fit, 1 to 3.
+# 3 + gutter + 3×21 = 76 at the default gutter, so 80 gets three columns and
+# 60 degrades to two rather than wrapping.
+msel_columns() {
+  local width=${1:-80}
+  local avail=$(( width - 3 - MSEL_GUTTER ))
+  local c=$(( avail / MSEL_CELL_W ))
+  (( c > 3 )) && c=3
+  (( c < 1 )) && c=1
+  printf '%s' "$c"
+}
+
+msel_layout() {
+  local g w=0
+  for g in "${COMPONENT_GROUPS[@]}"; do
+    if (( ${#g} > w )); then w=${#g}; fi
+  done
+  MSEL_GUTTER=$(( w + 1 ))
+
+  # Never name this local `width`: term_cols is dynamically scoped, so a local
+  # of the same name would shadow whatever the caller's stub reads.
+  local term_w
+  term_w=$(term_cols)
+  MSEL_COLS=$(msel_columns "$term_w")
+
+  # Single column on a very narrow terminal still has to fit; shrink the cell
+  # (and truncate names to match) rather than wrap the line.
+  MSEL_CELL=$MSEL_CELL_W
+  local room=$(( term_w - 3 - MSEL_GUTTER ))
+  if (( MSEL_COLS == 1 && room < MSEL_CELL_W )); then
+    MSEL_CELL=$room
+    (( MSEL_CELL < 8 )) && MSEL_CELL=8
+  fi
+
+  MSEL_ROW_START=(); MSEL_ROW_LEN=(); MSEL_ROW_LABEL=()
+  MSEL_ROW_OF=(); MSEL_COL_OF=()
+  local n=${#MSEL_KEYS[@]} i=0 r=0 gend len c first label
+  while (( i < n )); do
+    label=${MSEL_GROUPS[i]}
+    gend=$i
+    while (( gend < n )) && [[ "${MSEL_GROUPS[gend]}" == "$label" ]]; do
+      gend=$(( gend + 1 ))
+    done
+    first=1
+    while (( i < gend )); do
+      len=$(( gend - i ))
+      (( len > MSEL_COLS )) && len=$MSEL_COLS
+      MSEL_ROW_START+=("$i")
+      MSEL_ROW_LEN+=("$len")
+      if (( first )); then
+        MSEL_ROW_LABEL+=("$label")
+        first=0
+      else
+        MSEL_ROW_LABEL+=("")
+      fi
+      for ((c=0; c<len; c++)); do
+        MSEL_ROW_OF[i + c]=$r
+        MSEL_COL_OF[i + c]=$c
+      done
+      i=$(( i + len ))
+      r=$(( r + 1 ))
+    done
+  done
+  return 0
+}
+
+# msel_cell <index> [last] — one grid cell, padded to MSEL_CELL unless it ends
+# the row. Padding is computed from the ASCII name length only; the marker and
+# glyph are multi-byte and are never measured with ${#}.
+msel_cell() {
+  local i=$1 last=${2:-0}
+  local marker glyph name text pad maxname
+  maxname=$(( MSEL_CELL - 3 ))
+  name=${MSEL_NAMES[i]}
+  (( ${#name} > maxname )) && name=${name:0:maxname}
+
+  if (( i == MSEL_CURRENT )); then
+    marker="${C_CYAN}›${C_RESET}"
+    text="${C_CYAN}${C_BOLD}${name}${C_RESET}"
+  else
+    marker=" "
+    text="$name"
+  fi
+  if [[ "${MSEL_SEL[i]}" == "1" ]]; then
+    glyph="${C_GREEN}◉${C_RESET}"
+  else
+    glyph="${C_DIM}◌${C_RESET}"
+  fi
+
+  if (( last )); then
+    printf '%s%s %s' "$marker" "$glyph" "$text"
+  else
+    pad=$(( MSEL_CELL - 3 - ${#name} ))
+    (( pad < 1 )) && pad=1
+    printf '%s%s %s%*s' "$marker" "$glyph" "$text" "$pad" ""
+  fi
+}
+
+# msel_build — render the whole block into MSEL_LINES (header, hint, rail, grid).
+msel_build() {
+  MSEL_LINES=()
+  local n=${#MSEL_KEYS[@]} term_w sel=0 i
+  term_w=$(term_cols)
   for ((i=0; i<n; i++)); do
-    _msel_print_line "$i"
+    if [[ "${MSEL_SEL[i]}" == "1" ]]; then sel=$(( sel + 1 )); fi
   done
+  local skipped=$(( n - sel ))
+
+  # " selected · " is 12 visible chars, " skipped" is 8 — counted, not measured,
+  # because "·" is two bytes and ${#} would over-count it under the C locale.
+  local counter_len=$(( ${#sel} + 12 + ${#skipped} + 8 ))
+  local pad=$(( term_w - 3 - ${#MSEL_LABEL} - counter_len ))
+  (( pad < 2 )) && pad=2
+  MSEL_LINES+=("$(printf '%s◇%s  %s%s%s%*s%s%s selected · %s skipped%s' \
+    "$C_ORANGE" "$C_RESET" "$C_BOLD" "$MSEL_LABEL" "$C_RESET" \
+    "$pad" "" "$C_DIM" "$sel" "$skipped" "$C_RESET")")
+
+  local hint="↑↓←→ move · space toggle · a all · n none · enter confirm"
+  if (( 3 + $(vis_len "$hint") > term_w )); then
+    hint="↑↓←→ · space · a/n · enter"
+  fi
+  MSEL_LINES+=("$(printf '%s│%s  %s%s%s' "$C_DIM" "$C_RESET" "$C_DIM" "$hint" "$C_RESET")")
+  MSEL_LINES+=("$(printf '%s│%s' "$C_DIM" "$C_RESET")")
+
+  local r nrows=${#MSEL_ROW_START[@]} line start len c idx last
+  for ((r=0; r<nrows; r++)); do
+    line=$(printf '%s│%s  %s%-*s%s' \
+      "$C_DIM" "$C_RESET" "$C_DIM" "$MSEL_GUTTER" "${MSEL_ROW_LABEL[r]}" "$C_RESET")
+    start=${MSEL_ROW_START[r]}
+    len=${MSEL_ROW_LEN[r]}
+    for ((c=0; c<len; c++)); do
+      idx=$(( start + c ))
+      last=0
+      (( c == len - 1 )) && last=1
+      line+=$(msel_cell "$idx" "$last")
+    done
+    MSEL_LINES+=("$line")
+  done
+  return 0
+}
+
+msel_print_all() {
+  local line
+  for line in "${MSEL_LINES[@]}"; do
+    printf '%s\n' "$line"
+  done
+}
+
+# msel_visible_rows — how many of the rendered lines are still on screen. This
+# is the cursor-up distance; clamping it to the terminal height is what keeps
+# the redraw correct when the block has scrolled.
+msel_visible_rows() {
+  local total=${#MSEL_LINES[@]} lines v
+  lines=$(term_lines)
+  v=$(( lines - 1 ))
+  (( v > total )) && v=$total
+  (( v < 1 )) && v=1
+  printf '%s' "$v"
+}
+
+msel_redraw() {
+  local total=${#MSEL_LINES[@]} v i
+  v=$(msel_visible_rows)
+  printf '\033[%dA' "$v"
+  for ((i = total - v; i < total; i++)); do
+    printf '\033[2K%s\n' "${MSEL_LINES[i]}"
+  done
+}
+
+msel_right() {
+  local n=${#MSEL_KEYS[@]}
+  MSEL_CURRENT=$(( (MSEL_CURRENT + 1) % n ))
+}
+
+msel_left() {
+  local n=${#MSEL_KEYS[@]}
+  MSEL_CURRENT=$(( (MSEL_CURRENT - 1 + n) % n ))
+}
+
+# msel_vmove <±1> — same column on the adjacent grid row, clamped to that row's
+# width so a short last row of a group still catches the cursor.
+msel_vmove() {
+  local d=$1 nrows=${#MSEL_ROW_START[@]} r c len
+  r=$(( (MSEL_ROW_OF[MSEL_CURRENT] + d + nrows) % nrows ))
+  c=${MSEL_COL_OF[MSEL_CURRENT]}
+  len=${MSEL_ROW_LEN[r]}
+  if (( c >= len )); then c=$(( len - 1 )); fi
+  MSEL_CURRENT=$(( MSEL_ROW_START[r] + c ))
+}
+
+msel_up()   { msel_vmove -1; }
+msel_down() { msel_vmove 1; }
+
+msel_toggle() {
+  if [[ "${MSEL_SEL[MSEL_CURRENT]}" == "1" ]]; then
+    MSEL_SEL[MSEL_CURRENT]=0
+  else
+    MSEL_SEL[MSEL_CURRENT]=1
+  fi
+}
+
+msel_select_all() {
+  local i
+  for ((i=0; i<${#MSEL_KEYS[@]}; i++)); do MSEL_SEL[i]=1; done
+}
+
+msel_select_none() {
+  local i
+  for ((i=0; i<${#MSEL_KEYS[@]}; i++)); do MSEL_SEL[i]=0; done
+}
+
+msel_collect() {
+  PROMPT_MSEL_RESULT=()
+  local i
+  for ((i=0; i<${#MSEL_KEYS[@]}; i++)); do
+    if [[ "${MSEL_SEL[i]}" == "1" ]]; then PROMPT_MSEL_RESULT+=("${MSEL_KEYS[i]}"); fi
+  done
+  return 0
+}
+
+# msel_collapse — clear the block back to its title line and replace it with one
+# bounded summary line (never an unbounded ` · `-joined list).
+msel_collapse() {
+  local total=${#MSEL_LINES[@]} term_h v term_w
+  term_h=$(term_lines)
+  v=$(( total - 1 ))
+  (( v > term_h - 2 )) && v=$(( term_h - 2 ))
+  (( v < 0 )) && v=0
+  (( v > 0 )) && printf '\033[%dA' "$v"
+  printf '\033[J'
+
+  msel_collect
+  term_w=$(term_cols)
+  if (( ${#PROMPT_MSEL_RESULT[@]} == 0 )); then
+    printf '%s│%s  %s(none selected — baseline only)%s\n' "$C_DIM" "$C_RESET" "$C_DIM" "$C_RESET"
+  else
+    printf '%s│%s  %s%s%s\n' "$C_DIM" "$C_RESET" "$C_DIM" \
+      "$(selection_summary "$(( term_w - 3 ))" "${MSEL_KEYS[*]}" "${PROMPT_MSEL_RESULT[*]}")" \
+      "$C_RESET"
+  fi
+}
+
+prompt_multiselect() {
+  msel_parse "$@"
+  msel_layout
+  msel_build
+
+  printf '\n'
+  msel_print_all
 
   local k rest
   while :; do
@@ -321,61 +675,26 @@ prompt_multiselect() {
       $'\033')
         IFS= read -rsn2 -t 0.05 rest < /dev/tty || rest=""
         case "$rest" in
-          '[A') current=$(( (current - 1 + n) % n )) ;;
-          '[B') current=$(( (current + 1) % n )) ;;
+          '[A') msel_up ;;
+          '[B') msel_down ;;
+          '[C') msel_right ;;
+          '[D') msel_left ;;
         esac
         ;;
-      ' ') selected[current]=$(( 1 - selected[current] )) ;;
+      ' ') msel_toggle ;;
       '') break ;;
-      'k') current=$(( (current - 1 + n) % n )) ;;
-      'j') current=$(( (current + 1) % n )) ;;
+      'k') msel_up ;;
+      'j') msel_down ;;
+      'h') msel_left ;;
+      'l') msel_right ;;
+      'a') msel_select_all ;;
+      'n') msel_select_none ;;
     esac
-
-    printf '\033[%dA' "$n"
-    for ((i=0; i<n; i++)); do
-      printf '\033[2K'
-      _msel_print_line "$i"
-    done
+    msel_build
+    msel_redraw
   done
 
-  # collapse to summary
-  printf '\033[%dA\033[J' "$(( n + 1 ))"
-  PROMPT_MSEL_RESULT=()
-  local first=1 summary="│  "
-  for ((i=0; i<n; i++)); do
-    if (( selected[i] )); then
-      PROMPT_MSEL_RESULT+=("${keys[i]}")
-      if (( first )); then
-        summary+="${C_GREEN}●${C_RESET} ${C_BOLD}${names[i]}${C_RESET}"
-        first=0
-      else
-        summary+=" ${C_DIM}·${C_RESET} ${names[i]}"
-      fi
-    fi
-  done
-  if (( first )); then
-    printf '%s│%s  %s(none selected)%s\n' "$C_DIM" "$C_RESET" "$C_DIM" "$C_RESET"
-  else
-    printf '%s%s\n' "$C_DIM" "${summary#│  }" | sed "s|^|${C_DIM}│${C_RESET}  |"
-  fi
-}
-
-_msel_print_line() {
-  local i=$1
-  local glyph
-  if (( ${selected[i]} )); then glyph="${C_GREEN}◉${C_RESET}"; else glyph="${C_DIM}◌${C_RESET}"; fi
-
-  if (( i == current )); then
-    printf '%s│%s %s›%s %s ' "$C_DIM" "$C_RESET" "$C_CYAN" "$C_RESET" "$glyph"
-    printf '%s%s%s' "$C_CYAN$C_BOLD" "${names[i]}" "$C_RESET"
-  else
-    printf '%s│%s   %s ' "$C_DIM" "$C_RESET" "$glyph"
-    printf '%s' "${names[i]}"
-  fi
-  if [[ -n "${descs[i]}" ]]; then
-    printf '   %s%s%s' "$C_DIM" "${descs[i]}" "$C_RESET"
-  fi
-  printf '\n'
+  msel_collapse
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -415,6 +734,137 @@ register() {
   COMPONENT_INSTALL[$key]=$install_fn
   COMPONENT_CHECK[$key]=$check_fn
   COMPONENT_SIGNIN[$key]=$signin_hint
+}
+
+# ── registry-derived labels and summaries ───────────────────────────────────
+# Everything the wizard says about "how many tools" is computed here. The old
+# hardcoded enumeration ("Docker · gh · Node LTS · Bun · Claude Code") named
+# five of twelve and was wrong the moment a component was added.
+
+# applicable_components — every registered key that applies to this run, in
+# registration order, space separated.
+applicable_components() {
+  local key out=""
+  for key in "${COMPONENTS[@]}"; do
+    component_is_applicable "$key" || continue
+    out+="${out:+ }$key"
+  done
+  printf '%s' "$out"
+}
+
+# full_install_keys — what "Full install" installs: every applicable default.
+full_install_keys() {
+  local key out=""
+  for key in "${COMPONENTS[@]}"; do
+    component_is_applicable "$key" || continue
+    [[ "${COMPONENT_DEFAULT[$key]}" == "1" ]] || continue
+    out+="${out:+ }$key"
+  done
+  printf '%s' "$out"
+}
+
+# component_group_counts <key>... — "core 4 · languages 5 · …" in
+# COMPONENT_GROUPS order, skipping groups with nothing in them.
+component_group_counts() {
+  local g k c out=""
+  for g in "${COMPONENT_GROUPS[@]}"; do
+    c=0
+    for k in "$@"; do
+      if [[ "${COMPONENT_GROUP[$k]:-}" == "$g" ]]; then c=$(( c + 1 )); fi
+    done
+    (( c == 0 )) && continue
+    out+="${out:+ · }$g $c"
+  done
+  printf '%s' "$out"
+}
+
+# full_install_option — the "Full install" radio option string, counts and all.
+full_install_option() {
+  local -a keys=()
+  read -r -a keys <<< "$(full_install_keys)"
+  printf 'Full install|everything — %d tools|%s' \
+    "${#keys[@]}" "$(component_group_counts "${keys[@]}")"
+}
+
+# selection_summary <budget> "<all keys>" "<selected keys>"
+# One line, never wider than <budget> visible characters. A full selection
+# collapses to group counts; a partial one names the shorter half (usually the
+# skipped items) and truncates with "+N more" rather than running off the line
+# — a wrapped remainder carries no rail prefix and breaks the left border.
+selection_summary() {
+  local budget=$1
+  local -a all=() chosen=()
+  read -r -a all <<< "$2"
+  read -r -a chosen <<< "$3"
+  local total=${#all[@]} n=${#chosen[@]}
+
+  if (( n == total )); then
+    printf 'all %d  ·  %s' "$total" "$(component_group_counts "${all[@]}")"
+    return 0
+  fi
+
+  local -a skipped=() listed=()
+  local k verb
+  for k in "${all[@]}"; do
+    if [[ " $3 " != *" $k "* ]]; then skipped+=("$k"); fi
+  done
+  if (( ${#skipped[@]} <= n )); then
+    verb="skipped"
+    listed=("${skipped[@]}")
+  else
+    verb="selected"
+    listed=("${chosen[@]}")
+  fi
+
+  # "  ·  " is 5 visible chars, ": " is 2 — counted, never measured, because
+  # "·" is two bytes.
+  local pre="$n of $total"
+  local room=$(( budget - ${#pre} - 5 - ${#verb} - 2 ))
+  (( room < 10 )) && room=10
+
+  local names="" len=0 shown=0 count=${#listed[@]}
+  local i name add remaining reserve left
+
+  # If the whole list fits, print it — no "+N more" that is longer than the
+  # item it replaced.
+  local all_len=0
+  for ((i=0; i<count; i++)); do
+    name="${COMPONENT_NAME[${listed[i]}]:-${listed[i]}}"
+    all_len=$(( all_len + ${#name} ))
+    (( i > 0 )) && all_len=$(( all_len + 3 ))
+  done
+  if (( all_len <= room )); then
+    for ((i=0; i<count; i++)); do
+      (( i > 0 )) && names+=" · "
+      names+="${COMPONENT_NAME[${listed[i]}]:-${listed[i]}}"
+    done
+    printf '%s  ·  %s: %s' "$pre" "$verb" "$names"
+    return 0
+  fi
+
+  for ((i=0; i<count; i++)); do
+    name="${COMPONENT_NAME[${listed[i]}]:-${listed[i]}}"
+    add=${#name}
+    (( shown > 0 )) && add=$(( add + 3 ))
+    remaining=$(( count - i ))
+    reserve=0
+    if (( remaining > 1 )); then
+      # " · +N more"
+      reserve=$(( 3 + 1 + ${#remaining} + 5 ))
+    fi
+    if (( len + add + reserve > room )); then break; fi
+    (( shown > 0 )) && names+=" · "
+    names+="$name"
+    len=$(( len + add ))
+    shown=$(( shown + 1 ))
+  done
+  left=$(( count - shown ))
+  if (( left > 0 )); then
+    (( shown > 0 )) && names+=" · "
+    names+="+$left more"
+  fi
+
+  printf '%s  ·  %s: %s' "$pre" "$verb" "$names"
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1629,8 +2079,8 @@ cmd_install() {
   # ── install mode ──
   local mode
   prompt_radio "Install mode" mode \
-    "QuickStart|Docker · gh · Node LTS · Bun · Claude Code (defaults)" \
-    "Custom|pick which tools to install"
+    "$(full_install_option)" \
+    "Custom|pick what you need"
 
   # ── component selection ──
   local -a enabled=()
@@ -1639,17 +2089,12 @@ cmd_install() {
     local key
     for key in "${COMPONENTS[@]}"; do
       component_is_applicable "$key" || continue
-      msel_args+=("${key}|${COMPONENT_NAME[$key]}|${COMPONENT_DESC[$key]}|${COMPONENT_DEFAULT[$key]}")
+      msel_args+=("${key}|${COMPONENT_NAME[$key]}|${COMPONENT_DESC[$key]}|${COMPONENT_DEFAULT[$key]}|${COMPONENT_GROUP[$key]}")
     done
     prompt_multiselect "Components" "${msel_args[@]}"
     enabled=("${PROMPT_MSEL_RESULT[@]}")
   else
-    # QuickStart — all defaults
-    local key
-    for key in "${COMPONENTS[@]}"; do
-      component_is_applicable "$key" || continue
-      [[ "${COMPONENT_DEFAULT[$key]}" == "1" ]] && enabled+=("$key")
-    done
+    read -r -a enabled <<< "$(full_install_keys)"
   fi
 
   # ── confirm ──
@@ -1665,13 +2110,12 @@ cmd_install() {
   if (( ${#enabled[@]} == 0 )); then
     body "${C_BOLD}install${C_RESET}   ${C_DIM}(none — baseline only)${C_RESET}"
   else
-    local list=""
-    local k
-    for k in "${enabled[@]}"; do
-      [[ -n "$list" ]] && list+=" · "
-      list+="${COMPONENT_NAME[$k]}"
-    done
-    body "${C_BOLD}install${C_RESET}   $list"
+    # bounded: group counts for a full selection, the shorter half otherwise.
+    # "│  install   " is 13 visible characters.
+    local -a applicable=()
+    read -r -a applicable <<< "$(applicable_components)"
+    body "${C_BOLD}install${C_RESET}   $(selection_summary \
+      "$(( $(term_cols) - 13 ))" "${applicable[*]}" "${enabled[*]}")"
   fi
   rail
 
