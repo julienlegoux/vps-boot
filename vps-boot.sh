@@ -24,6 +24,10 @@ readonly SSHD_CONFIG="${VPS_BOOT_SSHD_CONFIG:-/etc/ssh/sshd_config}"
 readonly SSHD_DROPIN="${VPS_BOOT_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-vps-boot.conf}"
 readonly STATE_DIR="${VPS_BOOT_STATE_DIR:-/etc/vps-boot}"
 readonly STATE_FILE="$STATE_DIR/components"
+# rustup is installed system-wide rather than under $HOME. Both install_rust
+# and check_rust read these, so the two cannot point at different trees.
+readonly RUSTUP_HOME_DIR="${VPS_BOOT_RUSTUP_HOME:-/usr/local/rustup}"
+readonly CARGO_HOME_DIR="${VPS_BOOT_CARGO_HOME:-/usr/local/cargo}"
 
 # ANSI colors — disabled if stdout isn't a tty
 if [[ -t 1 ]]; then
@@ -799,7 +803,53 @@ selection_summary() {
   local total=${#all[@]} n=${#chosen[@]}
 
   if (( n == total )); then
-    printf 'all %d  ·  %s' "$total" "$(component_group_counts "${all[@]}")"
+    # The group counts are a list like any other, so they get the same
+    # truncation the partial path gets: keep whole "<group> <n>" segments while
+    # they fit, then "+K more", then — if even one segment overflows — the bare
+    # count. "all N" is at most 8 characters, so something always fits.
+    # "  ·  " is 5 visible chars and " · " is 3; counted, never measured,
+    # because "·" is two bytes.
+    local head="all $total"
+    local -a segs=()
+    local rest seg
+    rest=$(component_group_counts "${all[@]}")
+    while [[ -n "$rest" ]]; do
+      if [[ "$rest" == *" · "* ]]; then
+        seg="${rest%%" · "*}"
+        rest="${rest#*" · "}"
+      else
+        seg="$rest"
+        rest=""
+      fi
+      segs+=("$seg")
+    done
+    local room=$(( budget - ${#head} - 5 ))
+    local tail="" tlen=0 tshown=0 tcount=${#segs[@]}
+    local j tadd tremaining treserve
+    for ((j=0; j<tcount; j++)); do
+      seg="${segs[j]}"
+      tadd=${#seg}
+      (( tshown > 0 )) && tadd=$(( tadd + 3 ))
+      tremaining=$(( tcount - j ))
+      treserve=0
+      if (( tremaining > 1 )); then
+        # " · +K more"
+        treserve=$(( 3 + 1 + ${#tremaining} + 5 ))
+      fi
+      if (( tlen + tadd + treserve > room )); then break; fi
+      (( tshown > 0 )) && tail+=" · "
+      tail+="$seg"
+      tlen=$(( tlen + tadd ))
+      tshown=$(( tshown + 1 ))
+    done
+    if (( tshown == 0 )); then
+      printf '%s' "$head"
+      return 0
+    fi
+    if (( tshown < tcount )); then
+      tail+=" · +$(( tcount - tshown )) more"
+    fi
+    printf '%s  ·  %s' "$head" "$tail"
     return 0
   fi
 
@@ -966,7 +1016,11 @@ check_tools() {
   # Check tree
   if command -v tree >/dev/null 2>&1; then
     local v
-    v=$(tree --version 2>/dev/null | head -1 || echo "?")
+    # "tree v2.1.1 © 1996 - 2023 by Steve Baker, …" — the whole copyright
+    # notice follows the version, and joined with four other tools it runs off
+    # the rail. Keep the first two fields.
+    v=$(tree --version 2>/dev/null | head -1 | awk '{print $2}')
+    [[ -n "$v" ]] || v="?"
     versions+=("tree $v")
   else
     versions+=("tree ✗")
@@ -1195,8 +1249,13 @@ check_java() {
   # A JRE-only box would pass a naive `command -v java`; assert javac too.
   if command -v java >/dev/null 2>&1 && command -v javac >/dev/null 2>&1; then
     local v
-    # java -version writes its output to stderr, not stdout.
-    v=$(java -version 2>&1 | head -1 | grep -oP '"\K[^"]+' || echo "?")
+    # java -version writes its output to stderr, not stdout, as
+    # `openjdk version "25.0.3" 2026-04-21`. Split on the quotes and take the
+    # second field: a `grep -o` lookbehind matches twice (once after the
+    # opening quote, once after the closing one) and puts the build date on a
+    # second, rail-less line.
+    v=$(java -version 2>&1 | head -1 | awk -F'"' '{print $2}')
+    [[ -n "$v" ]] || v="?"
     ok "java $v"
   else
     ko "java/javac not installed"
@@ -1214,29 +1273,40 @@ install_rust() {
   # mutation — the profile.d drop-in below does that instead, so it works for
   # root and any created user alike.
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
+    | RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" \
       sh -s -- -y --no-modify-path
 
-  cat > /etc/profile.d/rust.sh <<'PROFILE'
-export RUSTUP_HOME=/usr/local/rustup
-export CARGO_HOME=/usr/local/cargo
-export PATH=$PATH:/usr/local/cargo/bin
+  cat > /etc/profile.d/rust.sh <<PROFILE
+export RUSTUP_HOME=$RUSTUP_HOME_DIR
+export CARGO_HOME=$CARGO_HOME_DIR
+export PATH=\$PATH:$CARGO_HOME_DIR/bin
 PROFILE
   chmod 644 /etc/profile.d/rust.sh
 }
 
 check_rust() {
-  # /usr/local/cargo/bin isn't on this process's PATH until profile.d is
+  # $CARGO_HOME_DIR/bin isn't on this process's PATH until profile.d is
   # sourced by a fresh login shell, so check against the pinned install dir
   # directly — the same reason check_go uses an absolute path.
-  if [ -x /usr/local/cargo/bin/rustc ] && [ -x /usr/local/cargo/bin/cargo ]; then
-    local rv cv
-    rv=$(/usr/local/cargo/bin/rustc --version 2>/dev/null | awk '{print $2}' || echo "?")
-    cv=$(/usr/local/cargo/bin/cargo --version 2>/dev/null | awk '{print $2}' || echo "?")
-    ok "rust $rv (cargo $cv)"
-  else
+  if [ ! -x "$CARGO_HOME_DIR/bin/rustc" ] || [ ! -x "$CARGO_HOME_DIR/bin/cargo" ]; then
     ko "rust not installed"
+    return
   fi
+  # Those binaries are rustup *shims*: they resolve the default toolchain out
+  # of RUSTUP_HOME, and with the variable unset they fail against ~/.rustup
+  # even though the toolchain is installed. Exporting it is the difference
+  # between a real version and the "?" that used to be reported as a pass.
+  local rv cv
+  rv=$(RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" \
+    "$CARGO_HOME_DIR/bin/rustc" --version 2>/dev/null | awk '{print $2}')
+  cv=$(RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" \
+    "$CARGO_HOME_DIR/bin/cargo" --version 2>/dev/null | awk '{print $2}')
+  # A shim that cannot name a version is a broken toolchain, not a pass.
+  if [[ -z "$rv" || -z "$cv" ]]; then
+    ko "rust installed but no default toolchain — run 'rustup default stable'"
+    return
+  fi
+  ok "rust $rv (cargo $cv)"
 }
 
 register rust "Rust" "rustup toolchain (rustc, cargo)" 1 system languages install_rust check_rust
@@ -1307,7 +1377,9 @@ install_claude() {
 check_claude() {
   if command -v claude >/dev/null 2>&1; then
     local v
-    v=$(claude --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    # "2.1.233 (Claude Code)" — the version is the first field; $NF is "Code)".
+    v=$(claude --version 2>/dev/null | head -1 | awk '{print $1}')
+    [[ -n "$v" ]] || v="?"
     ok "claude $v"
   else
     ko "claude code not installed"
@@ -1394,6 +1466,22 @@ register pi "pi" "Earendil's CLI coding agent" 1 system agents install_pi check_
   "pi login                 (pick a provider and paste its API key)"
 
 # ─── hermes ────────────────────────────────────────────────
+# The user-scope script is emitted by a function rather than inlined, so the
+# suite can run it with a stubbed `curl` and assert where it ends up.
+hermes_user_script() {
+  cat <<'SCRIPT'
+set -eo pipefail
+# `sudo -u <user> -H bash` sets HOME but inherits the caller's working
+# directory, and the caller is root in /root (mode 700). Anything the
+# installer runs that touches "." then fails as the unprivileged user — uv
+# probes for uv.toml and .venv and dies with EACCES before it starts. Leave
+# that directory first; -H already points HOME at the right place.
+cd "$HOME" || exit 1
+curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+  | bash -s -- --skip-setup
+SCRIPT
+}
+
 install_hermes() {
   # Upstream installer shells out to `sudo apt-get install ffmpeg` as
   # $USERNAME, which would prompt. Drop a temporary NOPASSWD rule for the
@@ -1402,18 +1490,21 @@ install_hermes() {
   printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$USERNAME" > "$sudoers"
   chmod 440 "$sudoers"
   trap 'rm -f /etc/sudoers.d/99-vps-boot-hermes' RETURN
-  sudo -u "$USERNAME" -H bash <<'EOF'
-set -eo pipefail
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
-  | bash -s -- --skip-setup
-EOF
+  sudo -u "$USERNAME" -H bash -c "$(hermes_user_script)"
   rm -f "$sudoers"
   trap - RETURN
 }
 
 check_hermes() {
   local v
-  v=$(sudo -u "$USERNAME" -H bash -lc 'command -v hermes >/dev/null 2>&1 && hermes --version 2>/dev/null | head -1' || true)
+  # "Hermes Agent v0.20.2 (2026.8.16)" — printed whole it reads
+  # "hermes Hermes Agent v0.20.2 …". Keep the field that starts with a digit
+  # or a "v".
+  # Same CWD trap as install_hermes: this runs from root's /root, which the
+  # user cannot read. `cd "$HOME"` first, and use a login shell so
+  # /etc/profile.d is sourced.
+  v=$(sudo -u "$USERNAME" -H bash -lc 'cd "$HOME" || exit 1; command -v hermes >/dev/null 2>&1 && hermes --version 2>/dev/null | head -1' || true)
+  v=$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^v?[0-9]+\./) { print $i; exit } }' <<< "$v")
   if [[ -n "$v" ]]; then
     ok "hermes $v"
   else

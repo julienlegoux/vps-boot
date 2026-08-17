@@ -15,6 +15,8 @@ export VPS_BOOT_SUDOERS_DIR="$TEST_ROOT/sudoers.d"
 export VPS_BOOT_SSHD_CONFIG="$TEST_ROOT/sshd_config"
 export VPS_BOOT_SSHD_DROPIN="$TEST_ROOT/sshd_config.d/00-vps-boot.conf"
 export VPS_BOOT_STATE_DIR="$TEST_ROOT/state"
+export VPS_BOOT_RUSTUP_HOME="$TEST_ROOT/rustup"
+export VPS_BOOT_CARGO_HOME="$TEST_ROOT/cargo"
 mkdir -p "$(dirname "$VPS_BOOT_SSHD_DROPIN")"
 printf 'Include %s/*.conf\n' "$(dirname "$VPS_BOOT_SSHD_DROPIN")" > "$VPS_BOOT_SSHD_CONFIG"
 
@@ -145,8 +147,10 @@ test_install_rust_uses_noninteractive_pinned_flags() {
   local src
   src=$(declare -f install_rust)
   grep -q -- '-y --no-modify-path' <<< "$src" || return 1
-  grep -q 'RUSTUP_HOME=/usr/local/rustup' <<< "$src" || return 1
-  grep -q 'CARGO_HOME=/usr/local/cargo' <<< "$src"
+  # The pinned homes moved into constants shared with check_rust; the defaults
+  # they resolve to are asserted where those constants are declared.
+  grep -q 'RUSTUP_HOME="\$RUSTUP_HOME_DIR"' <<< "$src" || return 1
+  grep -q 'CARGO_HOME="\$CARGO_HOME_DIR"' <<< "$src"
 }
 
 test_check_rust_reports_both_rustc_and_cargo_versions() {
@@ -156,7 +160,10 @@ test_check_rust_reports_both_rustc_and_cargo_versions() {
   src=$(declare -f check_rust)
   grep -q 'rustc' <<< "$src" || return 1
   grep -q 'cargo' <<< "$src" || return 1
-  grep -q '/usr/local/cargo/bin' <<< "$src"
+  # The pinned dir moved into a constant; the default it resolves to has not.
+  grep -q 'CARGO_HOME_DIR/bin' <<< "$src" || return 1
+  grep -q 'VPS_BOOT_CARGO_HOME:-/usr/local/cargo' "$SCRIPT" || return 1
+  grep -q 'VPS_BOOT_RUSTUP_HOME:-/usr/local/rustup' "$SCRIPT"
 }
 
 test_install_uv_pins_install_dir() {
@@ -642,6 +649,36 @@ test_selection_summary_partial_lists_skipped_names() {
 test_selection_summary_lists_selected_when_it_is_shorter() {
   [[ $(selection_summary 80 "docker gh node bun pnpm" "docker") \
      == "1 of 5  ·  selected: Docker + Compose" ]]
+}
+
+test_selection_summary_full_never_exceeds_its_budget() {
+  # The partial path has always truncated; the full path did not, and at the
+  # real registry size it overflows. The Confirm screen's budget is
+  # `term_cols - 13`, so on an 80-column terminal it is 67 — while
+  # "all 23  ·  core 4 · languages 5 · packaging 3 · agents 6 · cloud 3 ·
+  # infra 2" is 76 visible characters. It wrapped, and the wrapped remainder
+  # carries no rail prefix.
+  local -a all=("${COMPONENTS[@]}")
+  local out
+  out=$(selection_summary 67 "${all[*]}" "${all[*]}")
+  (( $(ui_width_of "$out") <= 67 )) || return 1
+  # still says how many, still names the groups it had room for
+  grep -q "^all ${#all[@]}" <<< "$out"
+}
+
+test_selection_summary_full_keeps_every_group_when_it_fits() {
+  # Degrading is a last resort — with room, no group is dropped and no
+  # "+N more" appears.
+  local -a all=("${COMPONENTS[@]}")
+  local out
+  out=$(selection_summary 120 "${all[*]}" "${all[*]}")
+  [[ "$out" == "all ${#all[@]}  ·  $(component_group_counts "${all[@]}")" ]]
+}
+
+test_selection_summary_full_degrades_to_the_count_alone() {
+  # Narrower than even one group count: the bare count is what survives.
+  local -a all=("${COMPONENTS[@]}")
+  [[ $(selection_summary 12 "${all[*]}" "${all[*]}") == "all ${#all[@]}" ]]
 }
 
 test_selection_summary_never_exceeds_its_budget() {
@@ -1185,6 +1222,143 @@ test_check_claude_reports_real_version() {
   [[ "$out" != *'?'* ]]
 }
 
+# ── version parsing, against the strings the tools really print ─────────────
+#
+# Every stub below is a verbatim first line captured from the 23-component
+# acceptance run on Ubuntu 24.04 (see
+# docs/epics/epic-1-expand-toolchain-components/verification/). Parsers written
+# against a guessed format pass vacuously; these do not.
+
+test_check_claude_parses_the_upstream_version_line() {
+  # Real output: "2.1.233 (Claude Code)". $NF is "Code)".
+  claude() { [[ ${1:-} == --version ]] && printf '2.1.233 (Claude Code)\n'; }
+  PASS=0; FAIL=0; WARN=0
+  local out
+  out=$(check_claude)
+  [[ "$out" == *"claude 2.1.233"* ]] || return 1
+  [[ "$out" != *'Code)'* ]] || return 1
+  [[ "$out" != *'?'* ]]
+}
+
+test_hermes_user_script_leaves_the_invoking_cwd() {
+  # `sudo -u <user> -H bash` sets HOME but inherits the *caller's* CWD, and the
+  # caller is root sitting in /root (mode 700). The Hermes installer runs uv,
+  # which probes "." for uv.toml and .venv, so the created-user acceptance run
+  # died with:
+  #   error: failed to query metadata of symlink `/root/.venv`:
+  #   Permission denied (os error 13)
+  # -- after 22 of 23 components had installed cleanly. The user-scope script
+  # has to leave that directory before it runs anything.
+  local home="$TEST_ROOT/hermes-home"
+  mkdir -p "$home"
+  # Stand in for the upstream installer: emit a script that reports its CWD.
+  curl() { printf 'printf "cwd=%%s\\n" "$PWD"\n'; }
+  local out
+  out=$(cd "$TEST_ROOT" && HOME="$home" && eval "$(hermes_user_script)")
+  [[ "$out" == "cwd=$home" ]]
+}
+
+test_install_hermes_runs_the_user_script() {
+  # The seam only helps if install_hermes actually goes through it.
+  declare -f install_hermes | grep -q 'hermes_user_script'
+}
+
+test_check_hermes_reports_a_bare_version() {
+  # Real output: "Hermes Agent v0.20.2 (2026.8.16)" — printed whole it reads
+  # "hermes Hermes Agent v0.20.2 (2026.8.16)".
+  sudo() { printf 'Hermes Agent v0.20.2 (2026.8.16)\n'; }
+  PASS=0; FAIL=0; WARN=0
+  local outfile="$TEST_ROOT/check-hermes-output"
+  USERNAME=root check_hermes > "$outfile" 2>&1
+  grep -q 'hermes v0.20.2' "$outfile" || return 1
+  ! grep -q 'Hermes Agent' "$outfile"
+}
+
+test_check_java_prints_exactly_one_line() {
+  # Real output: 'openjdk version "25.0.3" 2026-04-21' on stderr. grep -o with
+  # a lookbehind matches twice — once after the opening quote and once after
+  # the closing one — so the date landed on a second, rail-less line.
+  java() {
+    [[ ${1:-} == -version ]] || return 1
+    printf 'openjdk version "25.0.3" 2026-04-21\n' >&2
+    printf 'OpenJDK Runtime Environment (build 25.0.3+9-2-24.04.2-Ubuntu)\n' >&2
+  }
+  javac() { printf 'javac 25.0.3\n'; }
+  PASS=0; FAIL=0; WARN=0
+  local outfile="$TEST_ROOT/check-java-output"
+  check_java > "$outfile" 2>&1
+  (( $(wc -l < "$outfile") == 1 )) || return 1
+  grep -q 'java 25.0.3' "$outfile" || return 1
+  ! grep -q '2026-04-21' "$outfile"
+}
+
+test_check_tools_reports_a_bare_tree_version() {
+  # Real output: "tree v2.1.1 © 1996 - 2023 by Steve Baker, Thomas Moore, …" —
+  # a whole copyright notice on the rail.
+  jq() { printf 'jq-1.7\n'; }
+  rg() { printf 'ripgrep 14.1.0\n'; }
+  fd() { printf 'fdfind 9.0.0\n'; }
+  htop() { printf 'htop 3.3.0\n'; }
+  tree() {
+    printf 'tree v2.1.1 %s 1996 - 2023 by Steve Baker, Thomas Moore, Francesc Rocher\n' '(c)'
+  }
+  PASS=0; FAIL=0; WARN=0
+  local outfile="$TEST_ROOT/check-tools-output"
+  check_tools > "$outfile" 2>&1
+  grep -q 'tree v2.1.1' "$outfile" || return 1
+  ! grep -q 'Steve Baker' "$outfile"
+}
+
+# check_rust's shims live at an absolute path, so the constants are
+# env-overridable the same way LOG_FILE and STATE_DIR are.
+make_rust_shims() {
+  local rc=${1:-0} name
+  mkdir -p "$CARGO_HOME_DIR/bin"
+  for name in rustc cargo; do
+    {
+      printf '#!/usr/bin/env bash\n'
+      # rustup's shim resolves the default toolchain out of RUSTUP_HOME; with
+      # no RUSTUP_HOME it errors out even though the toolchain is installed.
+      printf '[[ -n "${RUSTUP_HOME:-}" ]] || { echo "error: rustup could not choose a version" >&2; exit 1; }\n'
+      printf '(( %s == 0 )) || exit %s\n' "$rc" "$rc"
+      printf 'echo "%s 1.97.1 (8bab26f4f 2026-07-14)"\n' "$name"
+    } > "$CARGO_HOME_DIR/bin/$name"
+    chmod +x "$CARGO_HOME_DIR/bin/$name"
+  done
+}
+
+test_check_rust_reports_versions_through_the_rustup_shims() {
+  # The acceptance run printed "rust ? (cargo ?)": check_rust called the shims
+  # with no RUSTUP_HOME, so rustup could not resolve the toolchain that was
+  # sitting right there — and the "?" fallback reported it as a pass.
+  make_rust_shims 0
+  PASS=0; FAIL=0; WARN=0
+  local outfile="$TEST_ROOT/check-rust-output"
+  check_rust > "$outfile" 2>&1
+  grep -q 'rust 1.97.1' "$outfile" || return 1
+  grep -q 'cargo 1.97.1' "$outfile" || return 1
+  [[ "$(cat "$outfile")" != *'?'* ]] || return 1
+  (( FAIL == 0 && PASS == 1 ))
+}
+
+test_check_rust_fails_when_the_shims_cannot_report() {
+  # A shim that cannot name a version is a broken toolchain, not a pass.
+  make_rust_shims 1
+  PASS=0; FAIL=0; WARN=0
+  local outfile="$TEST_ROOT/check-rust-broken-output"
+  check_rust > "$outfile" 2>&1
+  grep -q '✗' "$outfile" || return 1
+  (( FAIL == 1 ))
+}
+
+test_install_rust_and_check_rust_share_the_pinned_dirs() {
+  # One definition of where rustup lives; install and check cannot drift apart.
+  declare -f install_rust | grep -q 'RUSTUP_HOME_DIR' || return 1
+  declare -f install_rust | grep -q 'CARGO_HOME_DIR' || return 1
+  declare -f check_rust | grep -q 'RUSTUP_HOME_DIR' || return 1
+  declare -f check_rust | grep -q 'CARGO_HOME_DIR'
+}
+
 test_agent_clis_registered_after_node() {
   local node_line codex_line gemini_line pi_line
   node_line=$(grep -n '^register node ' "$SCRIPT" | cut -d: -f1)
@@ -1221,6 +1395,28 @@ test_readme_documents_new_defaults() {
   [[ -n $enrollment_paragraph ]] || return 1
   grep -Eq 'only after.*authorized_keys.*valid SSH key' <<< "$enrollment_paragraph" || return 1
   grep -Eq 'Only then.*reload(s|ing)? .*ssh\.service' <<< "$enrollment_paragraph"
+}
+
+test_readme_lists_every_component_in_registry_order() {
+  # The toolchain table drifts silently — adding a `register` line does not
+  # touch README.md, and nothing else notices. Assert every component has a row,
+  # in registry order, under its own group, and that the heading's count agrees.
+  local key row prev=0
+  for key in "${COMPONENTS[@]}"; do
+    # BRE: "|" and "+" are literal, so the row can be matched as written.
+    row=$(grep -n "^| ${COMPONENT_GROUP[$key]} | ${COMPONENT_NAME[$key]} |" \
+      "$ROOT_DIR/README.md" | head -1 | cut -d: -f1)
+    if [[ -z $row ]]; then
+      printf 'README.md has no row for %s (%s)\n' "$key" "${COMPONENT_NAME[$key]}" >&2
+      return 1
+    fi
+    if (( row <= prev )); then
+      printf 'README.md row for %s is out of registry order\n' "$key" >&2
+      return 1
+    fi
+    prev=$row
+  done
+  grep -q "^### Toolchain — ${#COMPONENTS[@]} components" "$ROOT_DIR/README.md"
 }
 
 test_cloud_cli_components_registered() {
@@ -1301,6 +1497,15 @@ run_test "check_caddy reports version and open UFW ports as ok" test_check_caddy
 run_test "check_caddy notes closed UFW ports without failing" test_check_caddy_notes_closed_ufw_ports_without_failing
 run_test "check_caddy fails when the service is not active" test_check_caddy_fails_when_service_not_active
 run_test "check_claude reports a real version" test_check_claude_reports_real_version
+run_test "check_claude parses the upstream version line" test_check_claude_parses_the_upstream_version_line
+run_test "check_java prints exactly one line" test_check_java_prints_exactly_one_line
+run_test "hermes user script leaves the invoking cwd" test_hermes_user_script_leaves_the_invoking_cwd
+run_test "install_hermes runs the user script" test_install_hermes_runs_the_user_script
+run_test "check_hermes reports a bare version" test_check_hermes_reports_a_bare_version
+run_test "check_tools reports a bare tree version" test_check_tools_reports_a_bare_tree_version
+run_test "check_rust reports versions through the rustup shims" test_check_rust_reports_versions_through_the_rustup_shims
+run_test "check_rust fails when the shims cannot report" test_check_rust_fails_when_the_shims_cannot_report
+run_test "install_rust and check_rust share the pinned dirs" test_install_rust_and_check_rust_share_the_pinned_dirs
 run_test "codex, gemini and pi register after node" test_agent_clis_registered_after_node
 run_test "no pi.dev installer reference remains" test_no_pi_dev_installer_reference
 run_test "README documents new defaults" test_readme_documents_new_defaults
@@ -1314,6 +1519,7 @@ run_test "check_rust reports both rustc and cargo" test_check_rust_reports_both_
 run_test "install_uv pins its install dir" test_install_uv_pins_install_dir
 run_test "check_uv reports its version" test_check_uv_reports_version
 run_test "check_uv fails when uv is missing" test_check_uv_fails_when_missing
+run_test "README lists every component in registry order" test_readme_lists_every_component_in_registry_order
 run_test "cloud CLI components are registered correctly" test_cloud_cli_components_registered
 run_test "vis_len counts glyphs as one column" test_vis_len_counts_glyphs_as_one_column
 run_test "install-mode counts line fits 80 columns" test_install_mode_counts_line_fits_80_columns
@@ -1323,6 +1529,9 @@ run_test "Install mode label names no tools" test_install_mode_label_names_no_to
 run_test "full selection summary collapses to group counts" test_selection_summary_full_collapses_to_group_counts
 run_test "partial selection summary lists skipped names" test_selection_summary_partial_lists_skipped_names
 run_test "selection summary lists the shorter half" test_selection_summary_lists_selected_when_it_is_shorter
+run_test "full selection summary never exceeds its budget" test_selection_summary_full_never_exceeds_its_budget
+run_test "full selection summary keeps every group when it fits" test_selection_summary_full_keeps_every_group_when_it_fits
+run_test "full selection summary degrades to the count alone" test_selection_summary_full_degrades_to_the_count_alone
 run_test "selection summary never exceeds its budget" test_selection_summary_never_exceeds_its_budget
 run_test "grid columns degrade on narrow terminals" test_msel_columns_degrade_on_narrow_terminals
 run_test "grid fits an 80x24 terminal" test_msel_grid_fits_an_80x24_terminal

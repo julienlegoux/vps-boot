@@ -3,12 +3,12 @@ type: Issue
 title: "Rework the wizard: Full install mode and grouped grid picker"
 description: "Rename QuickStart to Full install with registry-computed labels, rewrite prompt_multiselect as a grouped multi-column grid with a/n hotkeys, and stop both summary surfaces joining unbounded lists into one line."
 tags: [epic-1]
-timestamp: 2026-08-17T15:30:00Z
+timestamp: 2026-08-17T00:30:00Z
 epic: 1
 issue: 08
 slug: wizard-full-install-and-grid-picker
 size: M
-status: pr-open
+status: done
 gh_issue: 26
 gh_pr: 41
 depends_on: [1, 3, 4, 5, 6, 7]

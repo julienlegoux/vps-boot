@@ -3,10 +3,10 @@ type: Technical Specification
 title: "vps-boot — Technical Specs"
 description: "A single-file Bash installer that hardens a fresh Ubuntu LTS VPS and installs a selectable dev toolchain, driven by an interactive TTY wizard."
 tags: [planning, specs]
-timestamp: 2026-08-16T07:28:00Z
+timestamp: 2026-08-17T01:55:00Z
 status: final
-mapped_commit: 2e2cb762a6c0e97fb8613ed4b4a331695b2fcd1d
-mapped_at: 2026-08-16T07:28:00Z
+mapped_commit: 34bb863a87144d382e92f1604e8fc4b4f143e416
+mapped_at: 2026-08-17T01:55:00Z
 ---
 
 # vps-boot — Technical Specs
@@ -19,9 +19,9 @@ and no build step — the deliverable is one executable script.
 | Element | Value |
 |---|---|
 | Language | Bash (`#!/usr/bin/env bash`, `set -euo pipefail`) |
-| Minimum shell | Bash 4+ — the script relies on `declare -A` associative arrays (`vps-boot.sh:385-391`), `mapfile`, `BASH_REMATCH`, and `${var,,}` case conversion |
-| Source | `vps-boot.sh`, 1539 lines, single file |
-| Tests | `tests/test_vps_boot.sh`, 662 lines, hand-rolled harness |
+| Minimum shell | Bash 4+ — the script relies on `declare -A` associative arrays (`vps-boot.sh:713-720`), `mapfile`, `BASH_REMATCH`, and `${var,,}` case conversion |
+| Source | `vps-boot.sh`, 2514 lines, single file |
+| Tests | `tests/test_vps_boot.sh`, 1548 lines, hand-rolled harness |
 | Target OS | Ubuntu LTS (apt + systemd assumed throughout) |
 | Versioning | No git tags. `v0.0.1` / `v0.0.2` / `v0.0.3` exist only as merge-commit subjects |
 
@@ -29,7 +29,7 @@ Runtime dependencies are the target host's system tooling, not vendored librarie
 `apt`/`dpkg`, `systemd` (`systemctl`, `journalctl`), `ufw`, `fail2ban`,
 `openssh-server` (`sshd`, `ssh-keygen`), `iproute2` (`ss`), `sudo`/`visudo`,
 `curl`, `awk`, `grep`, `sed`, `od`, `getent`, `tput`. `bl_update`
-(`vps-boot.sh:766-772`) installs the subset that is not guaranteed present.
+(`vps-boot.sh:1699-1706`) installs the subset that is not guaranteed present.
 
 ## Architecture
 
@@ -38,7 +38,7 @@ options, constants, UI library, component registry, components, baseline, SSH ke
 enrollment, validation helpers, flows, entry point.
 
 **Component registry.** The toolchain is data, not control flow. `register()`
-(`vps-boot.sh:402-417`) appends a key to the `COMPONENTS` array and populates
+(`vps-boot.sh:726-741`) appends a key to the `COMPONENTS` array and populates
 eight parallel associative arrays keyed by that id: `COMPONENT_NAME`, `COMPONENT_DESC`,
 `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_GROUP`, `COMPONENT_INSTALL`,
 `COMPONENT_CHECK`, `COMPONENT_SIGNIN`. Adding a tool means writing
@@ -56,16 +56,35 @@ stays the trailing optional one.
 laid out group by group under one `# ══ <group> ══` banner each, so registration
 order matches group order.
 
-Twelve components are registered, in run order: `sudo_nopasswd`, `docker`, `gh`
-(`core`), `node`, `python`, `go` (`languages`), `bun`, `pnpm` (`packaging`),
-`claude`, `opencode`, `hermes` (`agents`), `herdr` (`infra`). `cloud` has no
-members yet. All default to on. `COMPONENT_SCOPE` is `system` for every
-component except `hermes`, which is `user` and runs its installer through
-`sudo -u "$USERNAME" -H bash`.
+Twenty-three components are registered, in run order:
+
+| Group | Components (registry order) | Count |
+|---|---|---|
+| `core` | `sudo_nopasswd`, `tools`, `docker`, `gh` | 4 |
+| `languages` | `node`, `python`, `go`, `java`, `rust` | 5 |
+| `packaging` | `bun`, `pnpm`, `uv` | 3 |
+| `agents` | `claude`, `opencode`, `codex`, `gemini`, `pi`, `hermes` | 6 |
+| `cloud` | `vercel`, `neon`, `hostinger` | 3 |
+| `infra` | `caddy`, `herdr` | 2 |
+
+All default to on. `COMPONENT_SCOPE` is `system` for every component except
+`hermes`, which is `user` and runs its installer through
+`sudo -u "$USERNAME" -H bash`. That idiom carries a trap worth stating once:
+`-H` sets `HOME` but inherits the *caller's* working directory, which is root's
+`/root` at mode `700`. A user-scope step therefore starts in a directory it
+cannot read, and anything touching `.` fails with `EACCES`. Every user-scope
+body begins `cd "$HOME" || exit 1`. It is invisible in root-only mode, so only
+a created-user install exercises it.
+
+Only 22 of the 23 are ever offered in **root-only** mode:
+`component_is_applicable` filters `sudo_nopasswd` out, since there is no
+created user for the NOPASSWD rule to name. So `Full install`'s registry-computed
+label reads "22 tools" and `core` reports 3 there, while a created-user install
+offers, installs and checks all 23.
 
 **Baseline.** Six functions — `bl_update`, `bl_unattended`, `bl_user`, `bl_ufw`,
 `bl_ssh_harden`, `bl_fail2ban` — are mandatory, deliberately *not* registered, and
-invoked in a hardcoded order by `cmd_install` (`vps-boot.sh:1269-1275`). `bl_update`
+invoked in a hardcoded order by `cmd_install` (`vps-boot.sh:2232-2239`). `bl_update`
 now also installs `build-essential`, so a compiler no longer depends on Hermes
 being selected. `bl_unattended` installs `unattended-upgrades` and enables the
 security pocket only, `Automatic-Reboot` left `false`. `bl_user` is the one
@@ -76,12 +95,12 @@ conditional step, skipped in root-only mode.
 `cmd_check` reconstructs the component list from persisted state, then calls the
 same `do_check`, so the inline and standalone verifier are one code path.
 
-**Sourcing guard.** `vps-boot.sh:1537-1539` runs `main` only when the file is
+**Sourcing guard.** `vps-boot.sh:2512-2514` runs `main` only when the file is
 executed rather than sourced, and the guard also treats an empty `BASH_SOURCE[0]`
 as executed so `curl … | bash -s install` still works. This is what lets the test
 harness `source` the script and call individual functions.
 
-**Two user modes.** `configure_user_mode` (`:1095-1109`) sets `USERNAME=root` and
+**Two user modes.** `configure_user_mode` (`:2064-2078`) sets `USERNAME=root` and
 `CREATE_USER=0` for the default root-only path, or `CREATE_USER=1` for a created
 sudo user. Mode is threaded through the rest of the script by branching on
 `$USERNAME == "root"`: `component_is_applicable` filters `sudo_nopasswd` out of
@@ -91,7 +110,7 @@ picks `PermitRootLogin yes` vs `no`, and several `check_*` functions branch on i
 ## Data model & storage
 
 No database. State is files on the target host, all of them env-overridable so the
-test harness can redirect them into a temp directory (`vps-boot.sh:16-25`).
+test harness can redirect them into a temp directory (`vps-boot.sh:16-30`).
 
 | Path | Constant | Purpose |
 |---|---|---|
@@ -102,10 +121,12 @@ test harness can redirect them into a temp directory (`vps-boot.sh:16-25`).
 | `/etc/sudoers.d/90-vps-boot-<user>` | `SUDOERS_DIR` | NOPASSWD rule from the `sudo_nopasswd` component |
 | `/etc/apt/apt.conf.d/99-vps-boot-lock-timeout` | `APT_LOCK_CONFIG` | `DPkg::Lock::Timeout "180"`. Transient — armed by an `EXIT` trap and removed when the run ends |
 | `/etc/apt/apt.conf.d/20auto-upgrades` | `UNATTENDED_UPGRADES_CONFIG` | Enables periodic unattended upgrades from the security pocket only; `Automatic-Reboot` left `false`. Written by `bl_unattended` and persists after the run |
+| `/usr/local/rustup`, `/usr/local/cargo` | `RUSTUP_HOME_DIR`, `CARGO_HOME_DIR` | System-wide rustup home and cargo home. `install_rust` installs into them and `check_rust` reads them, so the two cannot drift apart |
+| `/etc/profile.d/{go,java,rust}.sh` | — | Login-shell drop-ins written by `install_go`, `install_java` and `install_rust`: `PATH` for Go, `JAVA_HOME` for the JDK, and `RUSTUP_HOME`/`CARGO_HOME`/`PATH` for the rustup shims. They are what make these three resolve for a created user, not only for root |
 
 `/etc/sudoers.d/99-vps-boot-hermes` is a second, temporary sudoers rule written by
 `install_hermes` and removed by a `RETURN` trap. It hardcodes its path
-(`vps-boot.sh:687`, `:690`) rather than using `$SUDOERS_DIR`, so unlike every other
+(`vps-boot.sh:1489`, `:1492`) rather than using `$SUDOERS_DIR`, so unlike every other
 state path it is not redirectable under test.
 
 The state file is the only thing that survives to inform a later `check`. When it
@@ -119,7 +140,7 @@ There is no application auth. The subject is the host's SSH access policy.
 password authentication *on*, so the operator can still get in to push a key. Root
 login is `yes` in root-only mode and `no` when a user was created.
 
-**Lockdown** is a separate, opt-in step. `enroll_ssh_key` (`:1044-1089`) prints
+**Lockdown** is a separate, opt-in step. `enroll_ssh_key` (`:2013-2058`) prints
 copy-pasteable `ssh-copy-id` commands, then offers `ok` / `skip`. Choosing `ok`
 does not by itself lock down — `authorized_keys` must be non-empty *and*
 `ssh-keygen -l` must parse it as a real key. Only then does `lockdown_ssh` set
@@ -128,13 +149,13 @@ does not by itself lock down — `authorized_keys` must be non-empty *and*
 key leaves password auth on and warns.
 
 **Policy is verified against effective config, not the file.** `apply_sshd_policy`
-(`:946-979`) writes the drop-in, then `validate_sshd_policy` runs `sshd -t` and
+(`:1915-1948`) writes the drop-in, then `validate_sshd_policy` runs `sshd -t` and
 parses `sshd -T -C user=…,host=…,addr=…` output. That means a `Match` block
 elsewhere in `sshd_config` cannot silently override the managed values. The policy
 is checked twice when a user was created — once in the user's context and once in
-root's (`:904-908`) — because `PermitRootLogin` only shows its true value in root's
+root's (`:1873-1877`) — because `PermitRootLogin` only shows its true value in root's
 context. It also asserts exactly one effective `Port`, and that at least one
-effective `ListenAddress` is non-loopback (`validate_sshd_listeners`, `:849-889`),
+effective `ListenAddress` is non-loopback (`validate_sshd_listeners`, `:1818-1858`),
 so a loopback-only bind cannot pass as success.
 
 `sshd_root_is_key_only` accepts both `prohibit-password` and the legacy
@@ -198,7 +219,7 @@ would shadow a caller's or a test's value.
 | `python` | `ppa:deadsnakes/ppa` |
 | `go` | `go.dev/VERSION?m=text` then the matching tarball into `/usr/local` |
 | `java` | `apt`, probed descending for the newest installable LTS `openjdk-NN-jdk-headless` |
-| `rust` | `sh.rustup.rs`, piped to `sh` with `RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo -y --no-modify-path` |
+| `rust` | `sh.rustup.rs`, piped to `sh` with `RUSTUP_HOME`/`CARGO_HOME` pinned to `/usr/local/rustup` and `/usr/local/cargo` (`RUSTUP_HOME_DIR`, `CARGO_HOME_DIR`) plus `-y --no-modify-path`; a `/etc/profile.d/rust.sh` drop-in exports them and extends `PATH` |
 | `uv` | `astral.sh/uv/install.sh`, piped to `sh` with `UV_INSTALL_DIR=/usr/local/bin` |
 | `hermes` | NousResearch `install.sh` from GitHub raw, piped to `bash` |
 | `hostinger` | GitHub releases API (`hostinger/api-cli`), architecture-matched tarball verified against the release's `checksums.sha256` before installing to `/usr/local/bin` |
@@ -211,10 +232,16 @@ hard ordering dependency on `node` appearing earlier in the registry. The group
 order holds that for free: `node` sits in `languages`, ahead of `packaging`,
 `agents` and `cloud`.
 
-`herdr` is the only component that pins its upstream installer's target directory.
-Its default is `$HOME/.local/bin`, which is not on `PATH` for a fresh root-only
-box, so `HERDR_INSTALL_DIR=/usr/local/bin` makes the binary resolve for root and any
-created user alike.
+`herdr` and `uv` both pin their upstream installer's target directory. The
+default for each is `$HOME/.local/bin`, which is not on `PATH` for a fresh
+root-only box, so `HERDR_INSTALL_DIR=/usr/local/bin` and
+`UV_INSTALL_DIR=/usr/local/bin` make the binaries resolve for root and any
+created user alike. `rust` needs the same guarantee but cannot get it from an
+install dir — rustup's binaries in `$CARGO_HOME_DIR/bin` are *shims* that
+resolve the default toolchain out of `RUSTUP_HOME` at run time — so the
+profile.d drop-in exports the variable rather than only extending `PATH`, and
+`check_rust` sets it explicitly because it runs before any login shell has
+sourced that drop-in.
 
 `install_python` does not repoint `/usr/bin/python3`, deliberately: distro services
 such as fail2ban are built against the system interpreter. It probes deadsnakes
@@ -259,9 +286,16 @@ bash tests/test_vps_boot.sh              # all
 bash tests/test_vps_boot.sh <filter>     # or TEST_FILTER=<substring>
 ```
 
-37 cases, registered as explicit `run_test "<label>" <fn>` lines at the bottom of
+86 cases, registered as explicit `run_test "<label>" <fn>` lines at the bottom of
 the file. Output is TAP-flavoured (`ok - <label>` / `not ok - <label>`), with a
 `N passed, M failed` summary and a non-zero exit when anything failed.
+
+**The suite needs a real Linux host to pass in full.** Twelve cases require
+root, a writable `/run` and an `sshd` binary — the SSH-policy and sudoers
+groups, and the two end-to-end `cmd_install` flows. On a developer workstation
+without those they fail regardless of the branch, so a raw failure count is not
+a regression signal; compare the *set* of failing labels against the
+integration branch instead.
 
 The harness exercises the real script rather than a copy: it exports every
 `VPS_BOOT_*` path constant into a `mktemp -d` sandbox, writes a fake
@@ -270,15 +304,20 @@ functions directly. Mocking is done by redefining shell functions and commands
 (`chmod() { return 23; }`, stubbed `step_run`, stubbed `bl_*`) inside the subshell
 `run_test` spawns, so overrides do not leak between cases.
 
-Coverage is concentrated where the risk is: roughly half the cases are SSH policy —
+Coverage is concentrated where the risk is. SSH policy is the largest group —
 `Match`-block overrides, unexpected listener ports, loopback-only listeners, extra
-ports, reload failure, and drop-in restore on every failure path. The rest cover
-the sourcing guard, `step_run` fail-fast, APT fragment lifecycle, both install
-flows end to end, sudoers validation, and one case asserting the README documents
-current behaviour.
+ports, reload failure, and drop-in restore on every failure path. Next is the
+picker: `msel_layout`, `msel_build`, the 2-D navigation, column degradation,
+`vis_len`, and `selection_summary`'s budget on both its full and partial
+branches. The rest cover the sourcing guard, `step_run` fail-fast, APT fragment
+lifecycle, both install flows end to end, sudoers validation, the registry
+contract (every key names real functions, a known scope and one of the six
+groups), `check_*` version parsing against the verbatim strings the tools print
+on Ubuntu 24.04, and one case asserting the README documents current behaviour.
 
-Not covered: the UI/prompt library, the network-dependent `install_*` bodies, and
-anything requiring a real Ubuntu host.
+Not covered: the network-dependent `install_*` bodies, and anything requiring a
+real Ubuntu host — which is why an epic that changes the registry ends with a
+manual acceptance run against one.
 
 ## Cross-cutting concerns
 
@@ -296,13 +335,13 @@ re-arms it because a function called from a conditional context would otherwise 
 with `errexit` suppressed.
 
 **Trap-scoped cleanup.** The APT lock fragment is armed with an `EXIT` trap
-*before* it is written (`vps-boot.sh:1259-1260`), so an abort between the two
+*before* it is written (`vps-boot.sh:2222-2223`), so an abort between the two
 cannot strand it. `install_hermes` uses a `RETURN` trap for its temporary sudoers
 rule.
 
 **Secret handling.** `USER_PASSWORD` lives in a shell variable, is passed to
 `chpasswd` over a pipe rather than the command line, and is cleared immediately
-after the run phase (`vps-boot.sh:1283`).
+after the run phase (`vps-boot.sh:2247`).
 
 **Presentation.** All user-visible output goes through the UI helpers; ANSI colors
-are set to empty strings when stdout is not a TTY (`:28-40`).
+are set to empty strings when stdout is not a TTY (`:33-45`).
