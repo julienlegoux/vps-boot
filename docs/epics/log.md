@@ -2,6 +2,30 @@
 
 ## 2026-08-17
 
+* **Epic 1 issue 09 acceptance run 2 (created-user)**: second freshly rebuilt
+  Ubuntu 24.04.4 host, user `devuser`, SSH port 38030, Full install.
+  Confirmed the other half of the count run 1 established — the wizard offered
+  `everything — 23 tools` with `core 4`, because `sudo_nopasswd` is applicable
+  once a user exists. The run then **failed at Hermes**, 22 components in:
+  `sudo -u "$USERNAME" -H bash` sets `HOME` but inherits root's `/root`
+  (mode 700), so the user-scope shell starts where the created user cannot
+  stat, and uv — which the Hermes installer drives — died probing `.` for
+  `uv.toml` and `.venv`. Root-only mode cannot expose it, which is why it
+  survived eight PRs and a clean run 1. The idiom was documented that way in
+  both `.claude/CLAUDE.md` and `SPECS.md`, so the docs produced the defect;
+  fixed with a mandatory `cd "$HOME"`, the body moved into `hermes_user_script`
+  so the suite can execute it against a stubbed installer, and recorded as a
+  second drift record (`resolved` — the standard was wrong and changed). The
+  interrupted run was completed with the fixed script function by function in
+  registry order rather than by re-running `install`, which is unsupported.
+  Final `check devuser 38030`: 39 passed, 0 failed, 1 warning, exit 0, all 23
+  components with a real version and no `?`. In a fresh `bash -l` as `devuser`,
+  `java`, `javac`, `cargo`, `rustc`, `uv`, `fd`, `go` and every npm CLI
+  resolve, with `JAVA_HOME`, `RUSTUP_HOME` and `CARGO_HOME` set from
+  `/etc/profile.d` — what issue 04's drop-ins and uv's pinned install dir exist
+  for. Suite now 86 cases, 74 passed / 12 failed against develop's 61 / 12,
+  same twelve labels.
+
 * **Epic 1 issue 09 PR opened**:
   [PR #42](https://github.com/julienlegoux/vps-boot/pull/42) against `develop`
   for issue [#27](https://github.com/julienlegoux/vps-boot/issues/27) — the
