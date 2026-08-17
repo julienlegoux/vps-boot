@@ -43,7 +43,7 @@ eight parallel associative arrays keyed by that id: `COMPONENT_NAME`, `COMPONENT
 `COMPONENT_DEFAULT`, `COMPONENT_SCOPE`, `COMPONENT_GROUP`, `COMPONENT_INSTALL`,
 `COMPONENT_CHECK`, `COMPONENT_SIGNIN`. Adding a tool means writing
 `install_<key>`, `check_<key>`, and one `register` line — the wizard's
-multi-select, QuickStart's defaults, the run loop, and the verifier all iterate
+multi-select, Full install's defaults, the run loop, and the verifier all iterate
 the registry, so no other plumbing changes. Registration order is run order.
 
 `register <key> <name> <desc> <default 0|1> <scope> <group> <install_fn>
@@ -156,6 +156,33 @@ retries in 10 minutes, `backend = systemd`.
 distribution path work — stdin is the script itself. Prompts return values by
 writing to a caller-named variable rather than to stdout, because the UI rendering
 goes to stdout and command substitution would capture it.
+
+Two install modes, `Full install` and `Custom`. `Full install` runs every
+applicable default; its label and per-group counts are computed from the
+registry (`full_install_option`), never enumerated, because a hardcoded list
+rots as soon as a component is added. There is no third "baseline only" mode —
+Custom plus the picker's `n` hotkey is the two-keystroke equivalent.
+
+`prompt_multiselect` renders a **grouped grid**, not a flat list: the group name
+in a left gutter, then up to three columns of `MSEL_CELL_W` (21), degrading to
+two and then one as `term_cols` shrinks. Its state lives in `MSEL_*` globals so
+the layout (`msel_layout`), the rendering (`msel_build` → `MSEL_LINES`) and the
+2-D navigation (`msel_up`/`msel_down`/`msel_left`/`msel_right`) are unit-testable
+without a tty. The redraw moves the cursor up by the number of lines actually
+rendered, clamped to the terminal height (`msel_visible_rows`) — the previous
+picker moved up one row per option, which corrupted the display as soon as the
+block outgrew the screen.
+
+Neither summary surface ever joins an unbounded list into one line, because a
+wrapped remainder carries no rail prefix and breaks the left border.
+`selection_summary` renders group counts for a full selection, and otherwise the
+shorter of the skipped and selected halves, truncated with `+N more` to a
+caller-supplied budget. Both the picker's collapse and the Confirm screen use it.
+
+Terminal geometry goes through `term_cols` / `term_lines`, which validate
+`tput` output and fall back to 80×24. No rendering code may declare a local
+named `width`: these helpers are resolved dynamically, so a same-named local
+would shadow a caller's or a test's value.
 
 **Distribution** — `curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/{main,develop}/vps-boot.sh | sudo bash -s install`.
 

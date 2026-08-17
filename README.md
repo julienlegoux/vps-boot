@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 - **Root-only by default** — skip user creation for autonomous environments without sudo prompts, or create a non-root sudo user when you want one.
 - **Hardened SSH** — UFW exposes only the selected SSH port, fail2ban protects it, and key enrollment finishes by disabling both password authentication methods.
 - **Reliable package setup** — APT waits at most three minutes for background package locks instead of failing immediately during unattended upgrades.
-- **Batteries-included dev toolchain** — choose every default (QuickStart) or select individual components (Custom).
+- **Batteries-included dev toolchain** — choose every default (Full install) or pick components from a grouped grid (Custom).
 - **Modular** — the wizard and verifier discover components from the same registry.
 
 ## What you get
@@ -63,7 +63,9 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | Caddy | web server / reverse proxy via the official apt repo; installs and enables the service but opens **no** firewall ports — `check` reports whether UFW allows 80/443 |
 | herdr | agent-aware terminal multiplexer |
 
-QuickStart selects all default components. It includes Passwordless sudo only when you create a user. With a created user, Custom shows Passwordless sudo in the same checkbox list as the other components; root-only mode filters it out.
+Full install selects all default components. It includes Passwordless sudo only when you create a user. With a created user, Custom shows Passwordless sudo in the same checkbox grid as the other components; root-only mode filters it out. The mode's label and its per-group counts are computed from the registry, so they never go stale.
+
+Custom opens a grouped grid rather than a flat list — components sit under their group (`core`, `languages`, `packaging`, `agents`, `cloud`, `infra`) in up to three columns, which keeps the whole picker on an 80×24 screen. Move with `↑↓←→` (or `hjkl`), toggle with space, `a` ticks everything, `n` unticks everything, enter confirms. There is no separate "baseline only" mode: Custom then `n` is the two-keystroke equivalent. On a narrow terminal the grid drops to two columns, then one.
 
 ## Usage
 
@@ -81,8 +83,8 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot
 ◇    Username      › julien
 ◇    Password      › ********
 ◇  SSH port        › 47829     (random, editable)
-◇  Install mode    ● QuickStart   ○ Custom
-◇  Components      (Custom only — checkbox list)
+◇  Install mode    ● Full install   ○ Custom
+◇  Components      (Custom only — grouped checkbox grid)
 ◇  Continue?       ● Continue     ○ Abort
 ```
 
