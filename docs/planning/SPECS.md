@@ -69,7 +69,12 @@ Twenty-three components are registered, in run order:
 
 All default to on. `COMPONENT_SCOPE` is `system` for every component except
 `hermes`, which is `user` and runs its installer through
-`sudo -u "$USERNAME" -H bash`.
+`sudo -u "$USERNAME" -H bash`. That idiom carries a trap worth stating once:
+`-H` sets `HOME` but inherits the *caller's* working directory, which is root's
+`/root` at mode `700`. A user-scope step therefore starts in a directory it
+cannot read, and anything touching `.` fails with `EACCES`. Every user-scope
+body begins `cd "$HOME" || exit 1`. It is invisible in root-only mode, so only
+a created-user install exercises it.
 
 Only 22 of the 23 are ever offered in **root-only** mode:
 `component_is_applicable` filters `sudo_nopasswd` out, since there is no

@@ -1240,6 +1240,29 @@ test_check_claude_parses_the_upstream_version_line() {
   [[ "$out" != *'?'* ]]
 }
 
+test_hermes_user_script_leaves_the_invoking_cwd() {
+  # `sudo -u <user> -H bash` sets HOME but inherits the *caller's* CWD, and the
+  # caller is root sitting in /root (mode 700). The Hermes installer runs uv,
+  # which probes "." for uv.toml and .venv, so the created-user acceptance run
+  # died with:
+  #   error: failed to query metadata of symlink `/root/.venv`:
+  #   Permission denied (os error 13)
+  # -- after 22 of 23 components had installed cleanly. The user-scope script
+  # has to leave that directory before it runs anything.
+  local home="$TEST_ROOT/hermes-home"
+  mkdir -p "$home"
+  # Stand in for the upstream installer: emit a script that reports its CWD.
+  curl() { printf 'printf "cwd=%%s\\n" "$PWD"\n'; }
+  local out
+  out=$(cd "$TEST_ROOT" && HOME="$home" && eval "$(hermes_user_script)")
+  [[ "$out" == "cwd=$home" ]]
+}
+
+test_install_hermes_runs_the_user_script() {
+  # The seam only helps if install_hermes actually goes through it.
+  declare -f install_hermes | grep -q 'hermes_user_script'
+}
+
 test_check_hermes_reports_a_bare_version() {
   # Real output: "Hermes Agent v0.20.2 (2026.8.16)" — printed whole it reads
   # "hermes Hermes Agent v0.20.2 (2026.8.16)".
@@ -1476,6 +1499,8 @@ run_test "check_caddy fails when the service is not active" test_check_caddy_fai
 run_test "check_claude reports a real version" test_check_claude_reports_real_version
 run_test "check_claude parses the upstream version line" test_check_claude_parses_the_upstream_version_line
 run_test "check_java prints exactly one line" test_check_java_prints_exactly_one_line
+run_test "hermes user script leaves the invoking cwd" test_hermes_user_script_leaves_the_invoking_cwd
+run_test "install_hermes runs the user script" test_install_hermes_runs_the_user_script
 run_test "check_hermes reports a bare version" test_check_hermes_reports_a_bare_version
 run_test "check_tools reports a bare tree version" test_check_tools_reports_a_bare_tree_version
 run_test "check_rust reports versions through the rustup shims" test_check_rust_reports_versions_through_the_rustup_shims

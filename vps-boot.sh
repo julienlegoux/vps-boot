@@ -1466,6 +1466,22 @@ register pi "pi" "Earendil's CLI coding agent" 1 system agents install_pi check_
   "pi login                 (pick a provider and paste its API key)"
 
 # ─── hermes ────────────────────────────────────────────────
+# The user-scope script is emitted by a function rather than inlined, so the
+# suite can run it with a stubbed `curl` and assert where it ends up.
+hermes_user_script() {
+  cat <<'SCRIPT'
+set -eo pipefail
+# `sudo -u <user> -H bash` sets HOME but inherits the caller's working
+# directory, and the caller is root in /root (mode 700). Anything the
+# installer runs that touches "." then fails as the unprivileged user — uv
+# probes for uv.toml and .venv and dies with EACCES before it starts. Leave
+# that directory first; -H already points HOME at the right place.
+cd "$HOME" || exit 1
+curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+  | bash -s -- --skip-setup
+SCRIPT
+}
+
 install_hermes() {
   # Upstream installer shells out to `sudo apt-get install ffmpeg` as
   # $USERNAME, which would prompt. Drop a temporary NOPASSWD rule for the
@@ -1474,11 +1490,7 @@ install_hermes() {
   printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$USERNAME" > "$sudoers"
   chmod 440 "$sudoers"
   trap 'rm -f /etc/sudoers.d/99-vps-boot-hermes' RETURN
-  sudo -u "$USERNAME" -H bash <<'EOF'
-set -eo pipefail
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
-  | bash -s -- --skip-setup
-EOF
+  sudo -u "$USERNAME" -H bash -c "$(hermes_user_script)"
   rm -f "$sudoers"
   trap - RETURN
 }
@@ -1488,7 +1500,10 @@ check_hermes() {
   # "Hermes Agent v0.20.2 (2026.8.16)" — printed whole it reads
   # "hermes Hermes Agent v0.20.2 …". Keep the field that starts with a digit
   # or a "v".
-  v=$(sudo -u "$USERNAME" -H bash -lc 'command -v hermes >/dev/null 2>&1 && hermes --version 2>/dev/null | head -1' || true)
+  # Same CWD trap as install_hermes: this runs from root's /root, which the
+  # user cannot read. `cd "$HOME"` first, and use a login shell so
+  # /etc/profile.d is sourced.
+  v=$(sudo -u "$USERNAME" -H bash -lc 'cd "$HOME" || exit 1; command -v hermes >/dev/null 2>&1 && hermes --version 2>/dev/null | head -1' || true)
   v=$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^v?[0-9]+\./) { print $i; exit } }' <<< "$v")
   if [[ -n "$v" ]]; then
     ok "hermes $v"
