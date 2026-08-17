@@ -2,6 +2,28 @@
 
 ## 2026-08-17
 
+* **Epic 1 issue 08 PR opened**:
+  [PR #41](https://github.com/julienlegoux/vps-boot/pull/41) against `develop`
+  for issue [#26](https://github.com/julienlegoux/vps-boot/issues/26) —
+  `QuickStart` becomes `Full install` with its label and per-group counts
+  computed from the registry (`full_install_option`), and
+  `prompt_multiselect` is rewritten as a grouped grid: group name in a left
+  gutter, up to three columns of 21, degrading to two then one via
+  `term_cols`. Twenty-three components render in 12 lines instead of 25, so
+  the block fits an 80×24 screen again. The blind cursor-up is gone — the
+  block renders into `MSEL_LINES` and the redraw moves up the number of lines
+  actually printed, clamped to the terminal height; `prompt_radio` had the
+  same latent bug and now counts its own rows too. Both summary surfaces go
+  through one bounded `selection_summary` (group counts for a full selection,
+  the shorter half plus `+N more` otherwise) instead of an unbounded ` · `
+  join. Two width traps got explicit helpers and conventions: `vis_len`,
+  because `${#s}` counts bytes under the C locale, and a ban on locals named
+  `width`, because `term_cols` is resolved dynamically and a same-named local
+  shadows a caller's or a test's value — that shadowing made the first
+  narrow-terminal test pass vacuously. Nineteen new test cases; the suite goes
+  from 54 to 73. Oversize at 1055 changed lines against a predicted `M`;
+  flagged on the PR. No drift recorded. Also reconciled issue 07 to `done`.
+
 * **Epic 1 issue 07 completed**: [PR #40](https://github.com/julienlegoux/vps-boot/pull/40)
   merged into `develop`, GitHub issue
   [#25](https://github.com/julienlegoux/vps-boot/issues/25) closed.
