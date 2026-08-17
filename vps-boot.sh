@@ -24,6 +24,10 @@ readonly SSHD_CONFIG="${VPS_BOOT_SSHD_CONFIG:-/etc/ssh/sshd_config}"
 readonly SSHD_DROPIN="${VPS_BOOT_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-vps-boot.conf}"
 readonly STATE_DIR="${VPS_BOOT_STATE_DIR:-/etc/vps-boot}"
 readonly STATE_FILE="$STATE_DIR/components"
+# rustup is installed system-wide rather than under $HOME. Both install_rust
+# and check_rust read these, so the two cannot point at different trees.
+readonly RUSTUP_HOME_DIR="${VPS_BOOT_RUSTUP_HOME:-/usr/local/rustup}"
+readonly CARGO_HOME_DIR="${VPS_BOOT_CARGO_HOME:-/usr/local/cargo}"
 
 # ANSI colors — disabled if stdout isn't a tty
 if [[ -t 1 ]]; then
@@ -1012,7 +1016,11 @@ check_tools() {
   # Check tree
   if command -v tree >/dev/null 2>&1; then
     local v
-    v=$(tree --version 2>/dev/null | head -1 || echo "?")
+    # "tree v2.1.1 © 1996 - 2023 by Steve Baker, …" — the whole copyright
+    # notice follows the version, and joined with four other tools it runs off
+    # the rail. Keep the first two fields.
+    v=$(tree --version 2>/dev/null | head -1 | awk '{print $2}')
+    [[ -n "$v" ]] || v="?"
     versions+=("tree $v")
   else
     versions+=("tree ✗")
@@ -1241,8 +1249,13 @@ check_java() {
   # A JRE-only box would pass a naive `command -v java`; assert javac too.
   if command -v java >/dev/null 2>&1 && command -v javac >/dev/null 2>&1; then
     local v
-    # java -version writes its output to stderr, not stdout.
-    v=$(java -version 2>&1 | head -1 | grep -oP '"\K[^"]+' || echo "?")
+    # java -version writes its output to stderr, not stdout, as
+    # `openjdk version "25.0.3" 2026-04-21`. Split on the quotes and take the
+    # second field: a `grep -o` lookbehind matches twice (once after the
+    # opening quote, once after the closing one) and puts the build date on a
+    # second, rail-less line.
+    v=$(java -version 2>&1 | head -1 | awk -F'"' '{print $2}')
+    [[ -n "$v" ]] || v="?"
     ok "java $v"
   else
     ko "java/javac not installed"
@@ -1260,29 +1273,40 @@ install_rust() {
   # mutation — the profile.d drop-in below does that instead, so it works for
   # root and any created user alike.
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
+    | RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" \
       sh -s -- -y --no-modify-path
 
-  cat > /etc/profile.d/rust.sh <<'PROFILE'
-export RUSTUP_HOME=/usr/local/rustup
-export CARGO_HOME=/usr/local/cargo
-export PATH=$PATH:/usr/local/cargo/bin
+  cat > /etc/profile.d/rust.sh <<PROFILE
+export RUSTUP_HOME=$RUSTUP_HOME_DIR
+export CARGO_HOME=$CARGO_HOME_DIR
+export PATH=\$PATH:$CARGO_HOME_DIR/bin
 PROFILE
   chmod 644 /etc/profile.d/rust.sh
 }
 
 check_rust() {
-  # /usr/local/cargo/bin isn't on this process's PATH until profile.d is
+  # $CARGO_HOME_DIR/bin isn't on this process's PATH until profile.d is
   # sourced by a fresh login shell, so check against the pinned install dir
   # directly — the same reason check_go uses an absolute path.
-  if [ -x /usr/local/cargo/bin/rustc ] && [ -x /usr/local/cargo/bin/cargo ]; then
-    local rv cv
-    rv=$(/usr/local/cargo/bin/rustc --version 2>/dev/null | awk '{print $2}' || echo "?")
-    cv=$(/usr/local/cargo/bin/cargo --version 2>/dev/null | awk '{print $2}' || echo "?")
-    ok "rust $rv (cargo $cv)"
-  else
+  if [ ! -x "$CARGO_HOME_DIR/bin/rustc" ] || [ ! -x "$CARGO_HOME_DIR/bin/cargo" ]; then
     ko "rust not installed"
+    return
   fi
+  # Those binaries are rustup *shims*: they resolve the default toolchain out
+  # of RUSTUP_HOME, and with the variable unset they fail against ~/.rustup
+  # even though the toolchain is installed. Exporting it is the difference
+  # between a real version and the "?" that used to be reported as a pass.
+  local rv cv
+  rv=$(RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" \
+    "$CARGO_HOME_DIR/bin/rustc" --version 2>/dev/null | awk '{print $2}')
+  cv=$(RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" \
+    "$CARGO_HOME_DIR/bin/cargo" --version 2>/dev/null | awk '{print $2}')
+  # A shim that cannot name a version is a broken toolchain, not a pass.
+  if [[ -z "$rv" || -z "$cv" ]]; then
+    ko "rust installed but no default toolchain — run 'rustup default stable'"
+    return
+  fi
+  ok "rust $rv (cargo $cv)"
 }
 
 register rust "Rust" "rustup toolchain (rustc, cargo)" 1 system languages install_rust check_rust
@@ -1353,7 +1377,9 @@ install_claude() {
 check_claude() {
   if command -v claude >/dev/null 2>&1; then
     local v
-    v=$(claude --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+    # "2.1.233 (Claude Code)" — the version is the first field; $NF is "Code)".
+    v=$(claude --version 2>/dev/null | head -1 | awk '{print $1}')
+    [[ -n "$v" ]] || v="?"
     ok "claude $v"
   else
     ko "claude code not installed"
