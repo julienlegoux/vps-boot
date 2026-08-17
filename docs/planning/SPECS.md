@@ -3,10 +3,10 @@ type: Technical Specification
 title: "vps-boot — Technical Specs"
 description: "A single-file Bash installer that hardens a fresh Ubuntu LTS VPS and installs a selectable dev toolchain, driven by an interactive TTY wizard."
 tags: [planning, specs]
-timestamp: 2026-08-17T01:20:00Z
+timestamp: 2026-08-17T01:55:00Z
 status: final
-mapped_commit: 327287c95029a36b62669a20ed5bbc63fb0549de
-mapped_at: 2026-08-17T01:20:00Z
+mapped_commit: 34bb863a87144d382e92f1604e8fc4b4f143e416
+mapped_at: 2026-08-17T01:55:00Z
 ---
 
 # vps-boot — Technical Specs
@@ -20,8 +20,8 @@ and no build step — the deliverable is one executable script.
 |---|---|
 | Language | Bash (`#!/usr/bin/env bash`, `set -euo pipefail`) |
 | Minimum shell | Bash 4+ — the script relies on `declare -A` associative arrays (`vps-boot.sh:713-720`), `mapfile`, `BASH_REMATCH`, and `${var,,}` case conversion |
-| Source | `vps-boot.sh`, 2499 lines, single file |
-| Tests | `tests/test_vps_boot.sh`, 1500 lines, hand-rolled harness |
+| Source | `vps-boot.sh`, 2514 lines, single file |
+| Tests | `tests/test_vps_boot.sh`, 1548 lines, hand-rolled harness |
 | Target OS | Ubuntu LTS (apt + systemd assumed throughout) |
 | Versioning | No git tags. `v0.0.1` / `v0.0.2` / `v0.0.3` exist only as merge-commit subjects |
 
@@ -29,7 +29,7 @@ Runtime dependencies are the target host's system tooling, not vendored librarie
 `apt`/`dpkg`, `systemd` (`systemctl`, `journalctl`), `ufw`, `fail2ban`,
 `openssh-server` (`sshd`, `ssh-keygen`), `iproute2` (`ss`), `sudo`/`visudo`,
 `curl`, `awk`, `grep`, `sed`, `od`, `getent`, `tput`. `bl_update`
-(`vps-boot.sh:1684-1691`) installs the subset that is not guaranteed present.
+(`vps-boot.sh:1699-1706`) installs the subset that is not guaranteed present.
 
 ## Architecture
 
@@ -84,7 +84,7 @@ offers, installs and checks all 23.
 
 **Baseline.** Six functions — `bl_update`, `bl_unattended`, `bl_user`, `bl_ufw`,
 `bl_ssh_harden`, `bl_fail2ban` — are mandatory, deliberately *not* registered, and
-invoked in a hardcoded order by `cmd_install` (`vps-boot.sh:2217-2224`). `bl_update`
+invoked in a hardcoded order by `cmd_install` (`vps-boot.sh:2232-2239`). `bl_update`
 now also installs `build-essential`, so a compiler no longer depends on Hermes
 being selected. `bl_unattended` installs `unattended-upgrades` and enables the
 security pocket only, `Automatic-Reboot` left `false`. `bl_user` is the one
@@ -95,12 +95,12 @@ conditional step, skipped in root-only mode.
 `cmd_check` reconstructs the component list from persisted state, then calls the
 same `do_check`, so the inline and standalone verifier are one code path.
 
-**Sourcing guard.** `vps-boot.sh:2497-2499` runs `main` only when the file is
+**Sourcing guard.** `vps-boot.sh:2512-2514` runs `main` only when the file is
 executed rather than sourced, and the guard also treats an empty `BASH_SOURCE[0]`
 as executed so `curl … | bash -s install` still works. This is what lets the test
 harness `source` the script and call individual functions.
 
-**Two user modes.** `configure_user_mode` (`:2049-2063`) sets `USERNAME=root` and
+**Two user modes.** `configure_user_mode` (`:2064-2078`) sets `USERNAME=root` and
 `CREATE_USER=0` for the default root-only path, or `CREATE_USER=1` for a created
 sudo user. Mode is threaded through the rest of the script by branching on
 `$USERNAME == "root"`: `component_is_applicable` filters `sudo_nopasswd` out of
@@ -126,7 +126,7 @@ test harness can redirect them into a temp directory (`vps-boot.sh:16-30`).
 
 `/etc/sudoers.d/99-vps-boot-hermes` is a second, temporary sudoers rule written by
 `install_hermes` and removed by a `RETURN` trap. It hardcodes its path
-(`vps-boot.sh:1473`, `:1476`) rather than using `$SUDOERS_DIR`, so unlike every other
+(`vps-boot.sh:1489`, `:1492`) rather than using `$SUDOERS_DIR`, so unlike every other
 state path it is not redirectable under test.
 
 The state file is the only thing that survives to inform a later `check`. When it
@@ -140,7 +140,7 @@ There is no application auth. The subject is the host's SSH access policy.
 password authentication *on*, so the operator can still get in to push a key. Root
 login is `yes` in root-only mode and `no` when a user was created.
 
-**Lockdown** is a separate, opt-in step. `enroll_ssh_key` (`:1998-2043`) prints
+**Lockdown** is a separate, opt-in step. `enroll_ssh_key` (`:2013-2058`) prints
 copy-pasteable `ssh-copy-id` commands, then offers `ok` / `skip`. Choosing `ok`
 does not by itself lock down — `authorized_keys` must be non-empty *and*
 `ssh-keygen -l` must parse it as a real key. Only then does `lockdown_ssh` set
@@ -149,13 +149,13 @@ does not by itself lock down — `authorized_keys` must be non-empty *and*
 key leaves password auth on and warns.
 
 **Policy is verified against effective config, not the file.** `apply_sshd_policy`
-(`:1900-1933`) writes the drop-in, then `validate_sshd_policy` runs `sshd -t` and
+(`:1915-1948`) writes the drop-in, then `validate_sshd_policy` runs `sshd -t` and
 parses `sshd -T -C user=…,host=…,addr=…` output. That means a `Match` block
 elsewhere in `sshd_config` cannot silently override the managed values. The policy
 is checked twice when a user was created — once in the user's context and once in
-root's (`:1857-1862`) — because `PermitRootLogin` only shows its true value in root's
+root's (`:1873-1877`) — because `PermitRootLogin` only shows its true value in root's
 context. It also asserts exactly one effective `Port`, and that at least one
-effective `ListenAddress` is non-loopback (`validate_sshd_listeners`, `:1803-1843`),
+effective `ListenAddress` is non-loopback (`validate_sshd_listeners`, `:1818-1858`),
 so a loopback-only bind cannot pass as success.
 
 `sshd_root_is_key_only` accepts both `prohibit-password` and the legacy
@@ -286,7 +286,7 @@ bash tests/test_vps_boot.sh              # all
 bash tests/test_vps_boot.sh <filter>     # or TEST_FILTER=<substring>
 ```
 
-84 cases, registered as explicit `run_test "<label>" <fn>` lines at the bottom of
+86 cases, registered as explicit `run_test "<label>" <fn>` lines at the bottom of
 the file. Output is TAP-flavoured (`ok - <label>` / `not ok - <label>`), with a
 `N passed, M failed` summary and a non-zero exit when anything failed.
 
@@ -335,13 +335,13 @@ re-arms it because a function called from a conditional context would otherwise 
 with `errexit` suppressed.
 
 **Trap-scoped cleanup.** The APT lock fragment is armed with an `EXIT` trap
-*before* it is written (`vps-boot.sh:2207-2208`), so an abort between the two
+*before* it is written (`vps-boot.sh:2222-2223`), so an abort between the two
 cannot strand it. `install_hermes` uses a `RETURN` trap for its temporary sudoers
 rule.
 
 **Secret handling.** `USER_PASSWORD` lives in a shell variable, is passed to
 `chpasswd` over a pipe rather than the command line, and is cleared immediately
-after the run phase (`vps-boot.sh:2232`).
+after the run phase (`vps-boot.sh:2247`).
 
 **Presentation.** All user-visible output goes through the UI helpers; ANSI colors
 are set to empty strings when stdout is not a TTY (`:33-45`).
