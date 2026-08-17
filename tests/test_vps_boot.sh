@@ -268,6 +268,141 @@ test_bl_unattended_cleans_candidate_after_chmod_failure() {
   ! compgen -G "$(dirname "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG")/.vps-boot-unattended.*" >/dev/null
 }
 
+test_bl_unattended_enables_timer_without_starting_it_now() {
+  # `enable --now` would restart apt-daily-upgrade.timer mid-install, undoing
+  # stop_apt_timers and reopening the exact race from issue #43. bl_unattended
+  # must only *enable* it (for future boots) — restore_apt_timers is what
+  # starts it again, once the install is done.
+  local systemctl_log="$TEST_ROOT/unattended-enable-only-systemctl-calls"
+  apt() { :; }
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+
+  bl_unattended || return 1
+
+  grep -qx 'enable apt-daily-upgrade.timer' "$systemctl_log" || return 1
+  ! grep -q -- '--now' "$systemctl_log"
+}
+
+# ── apt/dpkg lock helpers (issue #43) ───────────────────────────────────────
+# `wait_for_apt` mitigates the gap DPkg::Lock::Timeout does not cover: that
+# option only bounds dpkg's own lock wait *inside* an apt/dpkg invocation, but
+# `apt update` takes /var/lib/apt/lists/lock before dpkg is ever invoked, so a
+# concurrent apt-daily(-upgrade) run can still fail the install outright.
+
+test_wait_for_apt_returns_immediately_when_unlocked() {
+  local fuser_log="$TEST_ROOT/wait-unlocked-fuser-calls"
+  local sleep_log="$TEST_ROOT/wait-unlocked-sleep-calls"
+  fuser() { printf 'call\n' >> "$fuser_log"; return 1; }
+  sleep() { printf '%s\n' "$*" >> "$sleep_log"; }
+
+  wait_for_apt || return 1
+
+  [[ -s $fuser_log ]] || return 1
+  [[ ! -e $sleep_log ]]
+}
+
+test_wait_for_apt_waits_while_lock_is_held() {
+  # Simulates the exact regression: something else holds the lock for a
+  # couple of checks, then releases it. The install path must wait for it,
+  # not fail on the first attempt.
+  local fuser_log="$TEST_ROOT/wait-blocked-fuser-calls"
+  local sleep_log="$TEST_ROOT/wait-blocked-sleep-calls"
+  local calls=0
+  fuser() {
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" >> "$fuser_log"
+    (( calls < 3 ))
+  }
+  sleep() { printf '%s\n' "$*" >> "$sleep_log"; }
+
+  wait_for_apt || return 1
+
+  [[ $(wc -l < "$fuser_log") -eq 3 ]] || return 1
+  [[ $(wc -l < "$sleep_log") -eq 2 ]]
+}
+
+test_wait_for_apt_times_out_and_reports() {
+  local msg_log="$TEST_ROOT/wait-timeout-msg"
+  fuser() { return 0; }
+  sleep() { :; }
+
+  if wait_for_apt 2 2>"$msg_log"; then
+    return 1
+  fi
+
+  grep -qi 'timed out' "$msg_log" || return 1
+  grep -q '2' "$msg_log"
+}
+
+test_wait_for_apt_defaults_budget_to_apt_lock_timeout_constant() {
+  grep -q 'APT_LOCK_TIMEOUT' <<< "$(declare -f wait_for_apt)"
+}
+
+test_wait_for_apt_is_a_noop_when_fuser_is_unavailable() {
+  # A minimal image without psmisc must not hang the install trying to run a
+  # binary that doesn't exist.
+  command() {
+    case "$2" in
+      fuser) return 1 ;;
+      *) builtin command "$@" ;;
+    esac
+  }
+  fuser() { return 0; }
+
+  wait_for_apt
+}
+
+test_wait_for_apt_precedes_every_apt_update_or_install_call() {
+  # Global, source-level check: every real `apt update`/`apt upgrade`/
+  # `apt install` invocation in the script must be immediately preceded by a
+  # wait_for_apt call. This is what keeps the regression from becoming
+  # invisible again the next time a component adds its own apt call.
+  local prev="" line trimmed
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]*apt[[:space:]]+(update|upgrade|install) ]]; then
+      if [[ $prev != *wait_for_apt* ]]; then
+        printf 'missing wait_for_apt before: %s\n' "$line" >&2
+        return 1
+      fi
+    fi
+    trimmed=${line#"${line%%[![:space:]]*}"}
+    [[ -n $trimmed && $trimmed != \#* ]] && prev=$line
+  done < "$SCRIPT"
+}
+
+test_stop_apt_timers_stops_timers_and_services() {
+  local systemctl_log="$TEST_ROOT/stop-timers-systemctl-calls"
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+
+  stop_apt_timers
+
+  grep -q 'apt-daily.timer' "$systemctl_log" || return 1
+  grep -q 'apt-daily-upgrade.timer' "$systemctl_log" || return 1
+  grep -q 'apt-daily.service' "$systemctl_log" || return 1
+  grep -q 'apt-daily-upgrade.service' "$systemctl_log" || return 1
+  grep -q '^stop' "$systemctl_log"
+}
+
+test_stop_apt_timers_survives_missing_units() {
+  systemctl() { return 1; }
+  stop_apt_timers
+}
+
+test_restore_apt_timers_starts_both_timers() {
+  local systemctl_log="$TEST_ROOT/restore-timers-systemctl-calls"
+  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+
+  restore_apt_timers
+
+  grep -q '^start.*apt-daily.timer' "$systemctl_log" || return 1
+  grep -q 'apt-daily-upgrade.timer' "$systemctl_log"
+}
+
+test_restore_apt_timers_survives_missing_units() {
+  systemctl() { return 1; }
+  restore_apt_timers
+}
+
 test_configure_user_mode_skip() {
   USERNAME=someone
   USER_PASSWORD=secret
@@ -519,6 +654,125 @@ test_cmd_install_arms_cleanup_before_apt_setup() {
 
   (( rc == 41 )) || return 1
   [[ ! -e $VPS_BOOT_APT_LOCK_CONFIG ]]
+}
+
+test_cmd_install_stops_apt_timers_before_first_apt_call() {
+  # stop_apt_timers must run before bl_update — the earliest real apt call —
+  # or the fix does nothing for the very first race window.
+  FLOW_TRACE="$TEST_ROOT/stop-timers-order-trace"
+  prepare_stubbed_install_flow || return 1
+  # This host has no root; neutralise the `$EUID -eq 0` guard the same way
+  # every other stub in prepare_stubbed_install_flow neutralises real system
+  # calls, so the test exercises the actual trap/ordering logic instead of
+  # only ever failing at "Must run as root."
+  die() { :; }
+  prompt_radio() {
+    local label=$1 outvar=$2 value
+    case "$label" in
+      "User account") value=skip ;;
+      "Install mode") value="Full install" ;;
+      "Continue?") value=Continue ;;
+      *) return 90 ;;
+    esac
+    printf -v "$outvar" '%s' "$value"
+  }
+  prompt_text() { printf -v "$2" '%s' 2222; }
+  prompt_password() { return 92; }
+  prompt_multiselect() { return 93; }
+  stop_apt_timers() { printf 'stop_apt_timers\n' >> "$FLOW_TRACE"; }
+  restore_apt_timers() { printf 'restore_apt_timers\n' >> "$FLOW_TRACE"; }
+
+  cmd_install "" 2222 >/dev/null || return 1
+
+  local stop_line update_line
+  stop_line=$(grep -n '^stop_apt_timers$' "$FLOW_TRACE" | cut -d: -f1)
+  update_line=$(grep -n '^bl_update$' "$FLOW_TRACE" | cut -d: -f1)
+  [[ -n $stop_line && -n $update_line ]] || return 1
+  (( stop_line < update_line ))
+}
+
+test_cmd_install_restores_apt_timers_on_success() {
+  FLOW_TRACE="$TEST_ROOT/restore-timers-success-trace"
+  prepare_stubbed_install_flow || return 1
+  die() { :; }
+  prompt_radio() {
+    local label=$1 outvar=$2 value
+    case "$label" in
+      "User account") value=skip ;;
+      "Install mode") value="Full install" ;;
+      "Continue?") value=Continue ;;
+      *) return 90 ;;
+    esac
+    printf -v "$outvar" '%s' "$value"
+  }
+  prompt_text() { printf -v "$2" '%s' 2222; }
+  prompt_password() { return 92; }
+  prompt_multiselect() { return 93; }
+  stop_apt_timers() { :; }
+  restore_apt_timers() { printf 'restore_apt_timers\n' >> "$FLOW_TRACE"; }
+
+  cmd_install "" 2222 >/dev/null || return 1
+
+  grep -qx 'restore_apt_timers' "$FLOW_TRACE"
+}
+
+test_cmd_install_restores_apt_timers_when_a_step_fails() {
+  # The acceptance criterion that matters most: a mid-run failure must not
+  # leave automatic security updates disabled on the host.
+  FLOW_TRACE="$TEST_ROOT/restore-timers-failure-trace"
+  prepare_stubbed_install_flow || return 1
+  die() { :; }
+  prompt_radio() {
+    local label=$1 outvar=$2 value
+    case "$label" in
+      "User account") value=skip ;;
+      "Install mode") value="Full install" ;;
+      "Continue?") value=Continue ;;
+      *) return 90 ;;
+    esac
+    printf -v "$outvar" '%s' "$value"
+  }
+  prompt_text() { printf -v "$2" '%s' 2222; }
+  prompt_password() { return 92; }
+  prompt_multiselect() { return 93; }
+  stop_apt_timers() { :; }
+  restore_apt_timers() { printf 'restore_apt_timers\n' >> "$FLOW_TRACE"; }
+  bl_update() { return 37; }
+
+  ( set -e; cmd_install "" 2222 >/dev/null 2>&1 )
+  local rc=$?
+
+  (( rc == 37 )) || return 1
+  grep -qx 'restore_apt_timers' "$FLOW_TRACE"
+}
+
+test_cmd_install_arms_timer_restore_before_stopping_timers() {
+  # Mirrors test_cmd_install_arms_cleanup_before_apt_setup: if stop_apt_timers
+  # itself fails partway, the EXIT trap must already be armed to restore them.
+  FLOW_TRACE="$TEST_ROOT/arm-timer-restore-trace"
+  prepare_stubbed_install_flow || return 1
+  die() { :; }
+  prompt_radio() {
+    local label=$1 outvar=$2 value
+    case "$label" in
+      "User account") value=skip ;;
+      "Install mode") value="Full install" ;;
+      "Continue?") value=Continue ;;
+      *) return 90 ;;
+    esac
+    printf -v "$outvar" '%s' "$value"
+  }
+  prompt_text() { printf -v "$2" '%s' 2222; }
+  prompt_password() { return 92; }
+  prompt_multiselect() { return 93; }
+  restore_apt_timers() { printf 'restore_apt_timers\n' >> "$FLOW_TRACE"; }
+  stop_apt_timers() { return 41; }
+
+  ( set -e; cmd_install "" 2222 >/dev/null 2>&1 )
+  local rc=$?
+
+  (( rc == 41 )) || return 1
+  grep -qx 'restore_apt_timers' "$FLOW_TRACE"
 }
 
 # ── wizard rendering helpers ────────────────────────────────────────────────
@@ -1465,6 +1719,21 @@ run_test "APT setup failure removes candidate and final fragment" test_apt_setup
 run_test "bl_update installs build-essential" test_bl_update_installs_build_essential
 run_test "bl_unattended installs package and writes config" test_bl_unattended_installs_package_and_writes_config
 run_test "bl_unattended cleans candidate after chmod failure" test_bl_unattended_cleans_candidate_after_chmod_failure
+run_test "bl_unattended enables the timer without starting it now" test_bl_unattended_enables_timer_without_starting_it_now
+run_test "wait_for_apt returns immediately when unlocked" test_wait_for_apt_returns_immediately_when_unlocked
+run_test "wait_for_apt waits while the lock is held" test_wait_for_apt_waits_while_lock_is_held
+run_test "wait_for_apt times out and reports" test_wait_for_apt_times_out_and_reports
+run_test "wait_for_apt defaults its budget to APT_LOCK_TIMEOUT" test_wait_for_apt_defaults_budget_to_apt_lock_timeout_constant
+run_test "wait_for_apt is a no-op when fuser is unavailable" test_wait_for_apt_is_a_noop_when_fuser_is_unavailable
+run_test "wait_for_apt precedes every apt update/install call" test_wait_for_apt_precedes_every_apt_update_or_install_call
+run_test "stop_apt_timers stops timers and services" test_stop_apt_timers_stops_timers_and_services
+run_test "stop_apt_timers survives missing units" test_stop_apt_timers_survives_missing_units
+run_test "restore_apt_timers starts both timers" test_restore_apt_timers_starts_both_timers
+run_test "restore_apt_timers survives missing units" test_restore_apt_timers_survives_missing_units
+run_test "cmd_install stops apt timers before the first apt call" test_cmd_install_stops_apt_timers_before_first_apt_call
+run_test "cmd_install restores apt timers on success" test_cmd_install_restores_apt_timers_on_success
+run_test "cmd_install restores apt timers when a step fails" test_cmd_install_restores_apt_timers_when_a_step_fails
+run_test "cmd_install arms timer restore before stopping timers" test_cmd_install_arms_timer_restore_before_stopping_timers
 run_test "skip mode configures root" test_configure_user_mode_skip
 run_test "create mode enables user creation" test_configure_user_mode_create
 run_test "root Full install cmd_install flow filters user-only work" test_cmd_install_root_full_install_flow

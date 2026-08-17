@@ -20,8 +20,8 @@ and no build step — the deliverable is one executable script.
 |---|---|
 | Language | Bash (`#!/usr/bin/env bash`, `set -euo pipefail`) |
 | Minimum shell | Bash 4+ — the script relies on `declare -A` associative arrays (`vps-boot.sh:713-720`), `mapfile`, `BASH_REMATCH`, and `${var,,}` case conversion |
-| Source | `vps-boot.sh`, 2514 lines, single file |
-| Tests | `tests/test_vps_boot.sh`, 1548 lines, hand-rolled harness |
+| Source | `vps-boot.sh`, 2595 lines, single file |
+| Tests | `tests/test_vps_boot.sh`, 1817 lines, hand-rolled harness |
 | Target OS | Ubuntu LTS (apt + systemd assumed throughout) |
 | Versioning | No git tags. `v0.0.1` / `v0.0.2` / `v0.0.3` exist only as merge-commit subjects |
 
@@ -84,11 +84,32 @@ offers, installs and checks all 23.
 
 **Baseline.** Six functions — `bl_update`, `bl_unattended`, `bl_user`, `bl_ufw`,
 `bl_ssh_harden`, `bl_fail2ban` — are mandatory, deliberately *not* registered, and
-invoked in a hardcoded order by `cmd_install` (`vps-boot.sh:2232-2239`). `bl_update`
+invoked in a hardcoded order by `cmd_install`. `bl_update`
 now also installs `build-essential`, so a compiler no longer depends on Hermes
 being selected. `bl_unattended` installs `unattended-upgrades` and enables the
-security pocket only, `Automatic-Reboot` left `false`. `bl_user` is the one
-conditional step, skipped in root-only mode.
+security pocket only, `Automatic-Reboot` left `false`; it enables
+`apt-daily-upgrade.timer` for future boots but deliberately without `--now` (see
+"apt/dpkg lock handling" below). `bl_user` is the one conditional step, skipped
+in root-only mode.
+
+**apt/dpkg lock handling (issue #43).** `DPkg::Lock::Timeout` (written by
+`install_apt_lock_timeout` to `APT_LOCK_CONFIG`) only bounds dpkg's own lock wait
+*inside* an apt/dpkg invocation — it does nothing for `apt update`, which takes
+`/var/lib/apt/lists/lock` before dpkg is ever invoked. On a fresh Ubuntu image
+`apt-daily.timer`/`apt-daily-upgrade.timer` are enabled out of the box and fire on
+a randomized delay after boot, so that lock can be held by an unrelated
+background run right as the first component's `apt update` executes. Two
+mitigations close this, both added for issue #43:
+- `wait_for_apt` polls `fuser` on `/var/lib/apt/lists/lock` and
+  `/var/lib/dpkg/lock-frontend` once a second, bounded by `APT_LOCK_TIMEOUT`
+  (falling loudly through `warn` if the budget is exhausted), and is called
+  immediately before every `apt update`/`apt upgrade`/`apt install` in the
+  script. It is a no-op if `fuser` isn't on the host.
+- `stop_apt_timers`/`restore_apt_timers` remove the race outright for the
+  duration of an install: `cmd_install` stops both timers (and their services,
+  to kill any run already in flight) before the first apt call, and restores
+  them once the run is done — success or failure, via `cmd_install_cleanup`
+  on the same `EXIT` trap that removes the lock-timeout fragment.
 
 **Flows.** `main` dispatches to `cmd_install`, `cmd_check`, or `cmd_help`.
 `cmd_install` is wizard → confirm → run → `enroll_ssh_key` → `do_check`.
@@ -119,7 +140,7 @@ test harness can redirect them into a temp directory (`vps-boot.sh:16-30`).
 | `/etc/ssh/sshd_config.d/00-vps-boot.conf` | `SSHD_DROPIN` | The managed sshd settings — `Port`, `PermitRootLogin`, `PasswordAuthentication`, `KbdInteractiveAuthentication` |
 | `/etc/ssh/sshd_config.bak.<epoch>` | — | Timestamped backup taken once by `bl_ssh_harden` |
 | `/etc/sudoers.d/90-vps-boot-<user>` | `SUDOERS_DIR` | NOPASSWD rule from the `sudo_nopasswd` component |
-| `/etc/apt/apt.conf.d/99-vps-boot-lock-timeout` | `APT_LOCK_CONFIG` | `DPkg::Lock::Timeout "180"`. Transient — armed by an `EXIT` trap and removed when the run ends |
+| `/etc/apt/apt.conf.d/99-vps-boot-lock-timeout` | `APT_LOCK_CONFIG` | `DPkg::Lock::Timeout "180"`. Only covers dpkg's own lock wait, not the apt lists lock — see `wait_for_apt`. Transient — armed by an `EXIT` trap and removed when the run ends |
 | `/etc/apt/apt.conf.d/20auto-upgrades` | `UNATTENDED_UPGRADES_CONFIG` | Enables periodic unattended upgrades from the security pocket only; `Automatic-Reboot` left `false`. Written by `bl_unattended` and persists after the run |
 | `/usr/local/rustup`, `/usr/local/cargo` | `RUSTUP_HOME_DIR`, `CARGO_HOME_DIR` | System-wide rustup home and cargo home. `install_rust` installs into them and `check_rust` reads them, so the two cannot drift apart |
 | `/etc/profile.d/{go,java,rust}.sh` | — | Login-shell drop-ins written by `install_go`, `install_java` and `install_rust`: `PATH` for Go, `JAVA_HOME` for the JDK, and `RUSTUP_HOME`/`CARGO_HOME`/`PATH` for the rustup shims. They are what make these three resolve for a created user, not only for root |
@@ -273,9 +294,11 @@ failed, which makes `check` usable as a health probe.
 **Known operational hazards handled explicitly in code**: socket-activated SSH
 (`ssh.socket` is disabled and masked so it cannot rebind `:22`), orphan sshd
 listeners left by `KillMode=process` (pkilled by pattern), a listener that does not
-actually bind after `systemctl start` (polled up to 5×1s), background apt locks
-during unattended-upgrades (`DPkg::Lock::Timeout` 180s), and a missing `/run/sshd`
-blocking `sshd -t` on hosts where `ssh.service` never started.
+actually bind after `systemctl start` (polled up to 5×1s), a concurrent
+apt-daily(-upgrade) run holding the apt lists lock (`wait_for_apt` plus
+`stop_apt_timers`/`restore_apt_timers` around the whole install — `DPkg::Lock::Timeout`
+180s alone does not cover this lock), and a missing `/run/sshd` blocking `sshd -t`
+on hosts where `ssh.service` never started.
 
 ## Testing infrastructure
 
@@ -286,7 +309,7 @@ bash tests/test_vps_boot.sh              # all
 bash tests/test_vps_boot.sh <filter>     # or TEST_FILTER=<substring>
 ```
 
-86 cases, registered as explicit `run_test "<label>" <fn>` lines at the bottom of
+101 cases, registered as explicit `run_test "<label>" <fn>` lines at the bottom of
 the file. Output is TAP-flavoured (`ok - <label>` / `not ok - <label>`), with a
 `N passed, M failed` summary and a non-zero exit when anything failed.
 
@@ -334,9 +357,12 @@ config that was never loaded.
 re-arms it because a function called from a conditional context would otherwise run
 with `errexit` suppressed.
 
-**Trap-scoped cleanup.** The APT lock fragment is armed with an `EXIT` trap
-*before* it is written (`vps-boot.sh:2222-2223`), so an abort between the two
-cannot strand it. `install_hermes` uses a `RETURN` trap for its temporary sudoers
+**Trap-scoped cleanup.** `cmd_install` arms a single `EXIT` trap
+(`cmd_install_cleanup`, which restores the apt timers and removes the APT lock
+fragment) *before* `stop_apt_timers`/`install_apt_lock_timeout` run, so an abort
+between arming and either setup step still restores state. The happy path calls
+both cleanups directly at the end and disarms the trap. `install_hermes` uses a
+`RETURN` trap for its temporary sudoers
 rule.
 
 **Secret handling.** `USER_PASSWORD` lives in a shell variable, is passed to

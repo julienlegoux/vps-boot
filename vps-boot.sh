@@ -961,6 +961,7 @@ register sudo_nopasswd "Passwordless sudo" "sudo without password prompts" 1 sys
 
 # ─── tools ─────────────────────────────────────────────────
 install_tools() {
+  wait_for_apt
   apt install -y jq ripgrep fd-find htop tree
 
   # fd-find is packaged as 'fdfind' on Debian/Ubuntu to avoid collision with the
@@ -1048,7 +1049,9 @@ install_docker() {
   codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
   echo "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $codename stable" \
     > /etc/apt/sources.list.d/docker.list
+  wait_for_apt
   apt update -y
+  wait_for_apt
   apt install -y \
     docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin
@@ -1085,7 +1088,9 @@ install_gh() {
   arch=$(dpkg --print-architecture)
   echo "deb [arch=$arch signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     > /etc/apt/sources.list.d/github-cli.list
+  wait_for_apt
   apt update -y
+  wait_for_apt
   apt install -y gh
 }
 
@@ -1107,6 +1112,7 @@ register gh "GitHub CLI" "gh" 1 system core install_gh check_gh \
 # ─── node ──────────────────────────────────────────────────
 install_node() {
   curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+  wait_for_apt
   apt install -y nodejs
 }
 
@@ -1125,6 +1131,7 @@ register node "Node LTS" "current LTS via NodeSource" 1 system languages install
 # ─── python ────────────────────────────────────────────────
 install_python() {
   add-apt-repository -y ppa:deadsnakes/ppa
+  wait_for_apt
   apt update -y
 
   # Pick the newest python3.X that actually has an installable candidate.
@@ -1134,6 +1141,7 @@ install_python() {
   for v in $(apt-cache search '^python3\.[0-9]+$' \
               | grep -oP 'python3\.\d+' \
               | sort -t. -k2 -n -r); do
+    wait_for_apt
     if apt install -y --dry-run "$v" "${v}-venv" >/dev/null 2>&1; then
       pyver="$v"
       break
@@ -1143,6 +1151,7 @@ install_python() {
 
   # distutils was removed from stdlib in 3.12 and deadsnakes no longer ships
   # python3.X-distutils for newer versions, so we don't install it.
+  wait_for_apt
   apt install -y "$pyver" "${pyver}-venv"
 
   # Bootstrap pip for the new interpreter via ensurepip (ships with python3.X-venv).
@@ -1222,6 +1231,7 @@ probe_java_lts_jdk() {
   local n
   for (( n = 40; n >= 17; n-- )); do
     (( (n - 21) % 4 == 0 )) || continue
+    wait_for_apt
     apt install -y --dry-run "openjdk-${n}-jdk-headless" >/dev/null 2>&1 || continue
     printf 'openjdk-%s-jdk-headless\n' "$n"
     return 0
@@ -1234,6 +1244,7 @@ install_java() {
   jdk=$(probe_java_lts_jdk) || { echo "no installable LTS JDK found" >&2; return 1; }
   n=${jdk#openjdk-}
   n=${n%-jdk-headless}
+  wait_for_apt
   apt install -y "$jdk"
 
   # apt-installed OpenJDK lands at this well-known update-alternatives path;
@@ -1613,7 +1624,9 @@ install_caddy() {
   chmod go+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
     -o /etc/apt/sources.list.d/caddy-stable.list
+  wait_for_apt
   apt update -y
+  wait_for_apt
   apt install -y caddy
   # Deliberately no `ufw allow` here. `apt install caddy` starts and enables
   # a systemd unit listening on :80, which the baseline firewall denies —
@@ -1696,9 +1709,59 @@ remove_apt_lock_timeout() {
   rm -f "$APT_LOCK_CONFIG"
 }
 
+# wait_for_apt [budget] — blocks while another process holds the APT lists
+# lock or the dpkg frontend lock, polling once a second up to `budget`
+# seconds (default $APT_LOCK_TIMEOUT). DPkg::Lock::Timeout, written by
+# install_apt_lock_timeout above, only bounds dpkg's own lock wait *inside*
+# an apt/dpkg invocation — it does nothing for `apt update`, which takes
+# /var/lib/apt/lists/lock before dpkg is ever invoked. That gap is what let
+# issue #43 through: apt-daily(-upgrade).timer fires on a randomized delay
+# after boot and can hold the lists lock right as an early component's
+# `apt update` runs. Call this immediately before every `apt update` /
+# `apt upgrade` / `apt install`.
+wait_for_apt() {
+  local budget=${1:-$APT_LOCK_TIMEOUT}
+  command -v fuser >/dev/null 2>&1 || return 0
+
+  local waited=0
+  while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+    if (( waited >= budget )); then
+      warn "wait_for_apt: timed out after ${budget}s waiting for the apt/dpkg lock"
+      return 1
+    fi
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+}
+
+# stop_apt_timers / restore_apt_timers — apt-daily.timer and
+# apt-daily-upgrade.timer are enabled out of the box on a fresh Ubuntu image
+# and fire on their own randomized schedule; that's the background apt-get
+# run seen holding the lists lock in issue #43. wait_for_apt() above waits it
+# out on each individual apt call, but the sturdier fix is to remove the race
+# for the whole install: stop both timers — and kill any run already in
+# flight by stopping their services too — before the first apt call, then
+# start them again once the install is done, success or failure.
+# bl_unattended still *enables* apt-daily-upgrade.timer (for every boot after
+# this one); it deliberately does not pass `--now`, since that would start it
+# again mid-install and reopen the exact race this closes. restore_apt_timers
+# is what starts it back up.
+stop_apt_timers() {
+  systemctl stop \
+    apt-daily.timer apt-daily-upgrade.timer \
+    apt-daily.service apt-daily-upgrade.service >/dev/null 2>&1 || true
+}
+
+restore_apt_timers() {
+  systemctl start apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+}
+
 bl_update() {
+  wait_for_apt
   apt update -y
+  wait_for_apt
   apt upgrade -y
+  wait_for_apt
   apt install -y \
     wget gnupg lsb-release ca-certificates \
     software-properties-common ufw fail2ban git unzip curl sudo \
@@ -1710,6 +1773,7 @@ bl_update() {
 # from under whatever is running on it is a decision for the operator, not a
 # default.
 bl_unattended() {
+  wait_for_apt
   apt install -y unattended-upgrades
 
   local config_dir candidate
@@ -1737,7 +1801,10 @@ EOF
     return 1
   fi
 
-  systemctl enable --now apt-daily-upgrade.timer >/dev/null 2>&1 || true
+  # Deliberately no `--now`: starting the timer immediately would restart the
+  # apt-daily-upgrade race stop_apt_timers just closed, mid-install.
+  # restore_apt_timers (cmd_install) starts it once the run is done.
+  systemctl enable apt-daily-upgrade.timer >/dev/null 2>&1 || true
 }
 
 bl_user() {
@@ -2219,7 +2286,11 @@ cmd_install() {
     die "Aborted by user."
   fi
 
-  trap remove_apt_lock_timeout EXIT
+  # Both cleanups are armed together, before either setup step runs, so a
+  # failure partway through setup (or any step after it) still restores the
+  # apt timers and drops the lock-timeout fragment — see cmd_install_cleanup.
+  trap cmd_install_cleanup EXIT
+  stop_apt_timers
   install_apt_lock_timeout
 
   # ════════════════════════════════════════════════════════════════════
@@ -2261,8 +2332,18 @@ cmd_install() {
 
   ENABLED_COMPONENTS=("${enabled[@]}")
   do_check
+  restore_apt_timers
   remove_apt_lock_timeout
   trap - EXIT
+}
+
+# cmd_install_cleanup — the EXIT-trap counterpart to stop_apt_timers +
+# install_apt_lock_timeout. Armed before either setup step runs so it fires
+# on any failure between there and the end of the run phase, not only on the
+# happy path (which calls both cleanups directly, then disarms the trap).
+cmd_install_cleanup() {
+  restore_apt_timers
+  remove_apt_lock_timeout
 }
 
 # ════════════════════════════════════════════════════════════════════════════
