@@ -775,6 +775,137 @@ test_cmd_install_arms_timer_restore_before_stopping_timers() {
   grep -qx 'restore_apt_timers' "$FLOW_TRACE"
 }
 
+# ── signal handling (real-world regression: SSH drops mid-prompt) ──────────
+# The EXIT trap alone does not cover a shell killed by an untrapped fatal
+# signal: bash's default disposition for SIGHUP/SIGTERM is to terminate the
+# process immediately, bypassing the EXIT trap entirely. That is exactly what
+# happened on the first real run of #43's fix — the SSH connection dropped
+# while `enroll_ssh_key`'s prompt was waiting on `/dev/tty`, the shell died on
+# SIGHUP, and cmd_install_cleanup never ran. These two run cmd_install as a
+# real background process (not a plain function call) so a real signal can be
+# delivered mid-run, and assert cleanup still happened before it died.
+assert_cmd_install_signal_restores_timers() {
+  local signal=$1 expected_rc=$2
+
+  cmd_install "" 2222 >/dev/null 2>&1 &
+  local pid=$!
+  # Safety net: if signal delivery does not work in this shell, don't hang
+  # the suite — force it down after the stub's own 5s sleep would anyway.
+  ( sleep 6; kill -9 "$pid" 2>/dev/null ) &
+  local watchdog=$!
+
+  local i
+  for ((i = 0; i < 50; i++)); do
+    grep -qx waiting "$FLOW_TRACE" 2>/dev/null && break
+    sleep 0.1
+  done
+  if ! grep -qx waiting "$FLOW_TRACE" 2>/dev/null; then
+    kill -9 "$pid" "$watchdog" 2>/dev/null
+    return 1
+  fi
+
+  kill -s "$signal" "$pid"
+  wait "$pid"
+  local rc=$?
+  kill "$watchdog" 2>/dev/null
+
+  (( rc == expected_rc )) || return 1
+  # Exactly once: EXIT and the signal trap must not both fire cleanup for the
+  # same termination, or a real `remove_apt_lock_timeout`/systemctl call
+  # would run twice for one event.
+  [[ $(grep -cx 'restore_apt_timers' "$FLOW_TRACE") -eq 1 ]]
+}
+
+# NOTE ON PORTABILITY OF THE TWO TESTS BELOW: on real Ubuntu/Linux bash, an
+# untrapped fatal signal (no `trap ... HUP`) bypasses the EXIT trap entirely —
+# that gap is the actual bug (see issue #43 follow-up). This repo's dev/test
+# host is Git Bash on Windows (MSYS2), whose signal emulation runs the EXIT
+# trap even for an *untrapped* SIGHUP/SIGTERM, which real Linux bash does not
+# do. That means these two behavioural tests cannot go red on this host even
+# without the fix below — they still correctly verify the post-fix behaviour
+# (single, idempotent cleanup with the right exit code) and will genuinely
+# red/green on Linux CI. test_cmd_install_traps_hup_int_term_for_cleanup
+# below is the one that reliably reds on every host, since it asserts the
+# trap registrations exist in source rather than relying on how a given
+# platform delivers the signal.
+
+test_cmd_install_restores_apt_timers_on_sighup() {
+  # The concrete regression: a dropped SSH connection delivers SIGHUP.
+  FLOW_TRACE="$TEST_ROOT/sighup-flow-trace"
+  prepare_stubbed_install_flow || return 1
+  die() { :; }
+  prompt_radio() {
+    local label=$1 outvar=$2 value
+    case "$label" in
+      "User account") value=skip ;;
+      "Install mode") value="Full install" ;;
+      "Continue?") value=Continue ;;
+      *) return 90 ;;
+    esac
+    printf -v "$outvar" '%s' "$value"
+  }
+  prompt_text() { printf -v "$2" '%s' 2222; }
+  prompt_password() { return 92; }
+  prompt_multiselect() { return 93; }
+  stop_apt_timers() { :; }
+  restore_apt_timers() { printf 'restore_apt_timers\n' >> "$FLOW_TRACE"; }
+  # Blocks at the exact point that bit: the enroll_ssh_key prompt, after
+  # every step has already run.
+  enroll_ssh_key() { printf 'waiting\n' >> "$FLOW_TRACE"; sleep 5; }
+
+  assert_cmd_install_signal_restores_timers HUP 129
+}
+
+test_cmd_install_restores_apt_timers_on_sigterm() {
+  FLOW_TRACE="$TEST_ROOT/sigterm-flow-trace"
+  prepare_stubbed_install_flow || return 1
+  die() { :; }
+  prompt_radio() {
+    local label=$1 outvar=$2 value
+    case "$label" in
+      "User account") value=skip ;;
+      "Install mode") value="Full install" ;;
+      "Continue?") value=Continue ;;
+      *) return 90 ;;
+    esac
+    printf -v "$outvar" '%s' "$value"
+  }
+  prompt_text() { printf -v "$2" '%s' 2222; }
+  prompt_password() { return 92; }
+  prompt_multiselect() { return 93; }
+  stop_apt_timers() { :; }
+  restore_apt_timers() { printf 'restore_apt_timers\n' >> "$FLOW_TRACE"; }
+  enroll_ssh_key() { printf 'waiting\n' >> "$FLOW_TRACE"; sleep 5; }
+
+  assert_cmd_install_signal_restores_timers TERM 143
+}
+
+test_cmd_install_traps_hup_int_term_for_cleanup() {
+  # Source-level, platform-independent complement to the two behavioural
+  # tests above: asserts the actual trap registrations exist, so this one
+  # reds/greens reliably regardless of how a given host's bash delivers
+  # signals to background jobs.
+  local src
+  src=$(declare -f cmd_install)
+  grep -qE "trap[^|&]*HUP" <<< "$src" || return 1
+  grep -qE "trap[^|&]*INT" <<< "$src" || return 1
+  grep -qE "trap[^|&]*TERM" <<< "$src" || return 1
+  grep -q 'cmd_install_handle_signal' <<< "$src"
+}
+
+test_cmd_install_signal_handler_disarms_traps_before_cleanup() {
+  # The idempotency guarantee: the handler must disarm every trap (so the
+  # `exit` it calls doesn't re-fire the EXIT trap and double-run cleanup)
+  # before running cleanup, not after.
+  local src
+  src=$(declare -f cmd_install_handle_signal)
+  local disarm_line cleanup_line
+  disarm_line=$(grep -n "trap -" <<< "$src" | head -1 | cut -d: -f1)
+  cleanup_line=$(grep -n 'cmd_install_cleanup' <<< "$src" | head -1 | cut -d: -f1)
+  [[ -n $disarm_line && -n $cleanup_line ]] || return 1
+  (( disarm_line < cleanup_line ))
+}
+
 # ── wizard rendering helpers ────────────────────────────────────────────────
 # The grid glyphs are multi-byte; ${#s} counts bytes under the C locale, so
 # every width assertion goes through this ASCII proxy instead.
@@ -1734,6 +1865,10 @@ run_test "cmd_install stops apt timers before the first apt call" test_cmd_insta
 run_test "cmd_install restores apt timers on success" test_cmd_install_restores_apt_timers_on_success
 run_test "cmd_install restores apt timers when a step fails" test_cmd_install_restores_apt_timers_when_a_step_fails
 run_test "cmd_install arms timer restore before stopping timers" test_cmd_install_arms_timer_restore_before_stopping_timers
+run_test "cmd_install restores apt timers on SIGHUP" test_cmd_install_restores_apt_timers_on_sighup
+run_test "cmd_install restores apt timers on SIGTERM" test_cmd_install_restores_apt_timers_on_sigterm
+run_test "cmd_install traps HUP/INT/TERM for cleanup" test_cmd_install_traps_hup_int_term_for_cleanup
+run_test "signal handler disarms traps before cleanup" test_cmd_install_signal_handler_disarms_traps_before_cleanup
 run_test "skip mode configures root" test_configure_user_mode_skip
 run_test "create mode enables user creation" test_configure_user_mode_create
 run_test "root Full install cmd_install flow filters user-only work" test_cmd_install_root_full_install_flow
