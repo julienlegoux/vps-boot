@@ -2440,10 +2440,18 @@ cmd_install() {
   # ════════════════════════════════════════════════════════════════════
   enroll_ssh_key
 
-  ENABLED_COMPONENTS=("${enabled[@]}")
-  do_check
+  # Restore *before* the verifier, not after. do_check asserts
+  # apt-daily-upgrade.timer is active, and bl_unattended deliberately enables it
+  # without --now, so running the verifier inside the window stop_apt_timers
+  # holds open reported a false ✗ on every install (issue #49). Safe: no apt
+  # invocation exists in do_check or in any check_*, so nothing from here on
+  # takes an apt lock. The traps stay armed across do_check — cmd_install_cleanup
+  # is idempotent, so the exit-1 path re-running it costs nothing.
   restore_apt_timers
   remove_apt_lock_timeout
+
+  ENABLED_COMPONENTS=("${enabled[@]}")
+  do_check
   trap - EXIT HUP INT TERM
 }
 
@@ -2580,6 +2588,22 @@ cmd_check() {
   do_check
 }
 
+# do_check_unattended — the automatic-security-updates assertion, split in two.
+# The old single message ("not configured or timer inactive") conflated causes
+# that mean opposite things: a config that never landed is a failed install,
+# while a config that is right with the timer stopped is cleanup that was killed
+# before restore_apt_timers ran. The operator had to read the source to tell.
+do_check_unattended() {
+  if ! grep -q '^APT::Periodic::Unattended-Upgrade "1";$' \
+       "$UNATTENDED_UPGRADES_CONFIG" 2>/dev/null; then
+    ko "unattended-upgrades not configured"
+  elif ! systemctl is-active --quiet apt-daily-upgrade.timer 2>/dev/null; then
+    ko "unattended-upgrades on, apt-daily-upgrade.timer inactive"
+  else
+    ok "unattended-upgrades configured, timer active"
+  fi
+}
+
 do_check() {
   PASS=0; FAIL=0; WARN=0
 
@@ -2692,12 +2716,7 @@ do_check() {
   fi
 
   # ── unattended upgrades ──
-  if grep -q '^APT::Periodic::Unattended-Upgrade "1";$' "$UNATTENDED_UPGRADES_CONFIG" 2>/dev/null \
-     && systemctl is-active --quiet apt-daily-upgrade.timer 2>/dev/null; then
-    ok "unattended-upgrades configured, timer active"
-  else
-    ko "unattended-upgrades not configured or timer inactive"
-  fi
+  do_check_unattended
   if [[ -e /var/run/reboot-required ]]; then
     note "reboot required — a pending update needs a reboot to take effect"
   fi

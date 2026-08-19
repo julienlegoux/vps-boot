@@ -403,6 +403,50 @@ test_restore_apt_timers_survives_missing_units() {
   restore_apt_timers
 }
 
+test_cmd_install_restores_apt_timers_before_the_verifier() {
+  # bl_unattended enables apt-daily-upgrade.timer without --now on purpose, so
+  # the timer is inactive for the whole run by design. do_check asserts it is
+  # active — run inside the window stop_apt_timers holds open, that assertion
+  # reports a false ✗ on every single install (issue #49). Source-level because
+  # the behavioural install-flow cases need a root host.
+  local src restore_line check_line
+  src=$(declare -f cmd_install)
+  restore_line=$(grep -n 'restore_apt_timers' <<< "$src" | head -1 | cut -d: -f1)
+  # declare -f renders each statement with a trailing semicolon
+  check_line=$(grep -n '^ *do_check;\?$' <<< "$src" | head -1 | cut -d: -f1)
+  [[ -n $restore_line && -n $check_line ]] || return 1
+  (( restore_line < check_line ))
+}
+
+test_do_check_delegates_the_unattended_assertion() {
+  declare -F do_check_unattended >/dev/null || return 1
+  grep -q 'do_check_unattended' <<< "$(declare -f do_check)"
+}
+
+test_do_check_unattended_names_which_half_failed() {
+  # "not configured or timer inactive" conflated two causes that mean opposite
+  # things: a failed install, versus cleanup that was killed before it ran.
+  local out
+  ok() { printf 'OK %s\n' "$1"; }
+  ko() { printf 'KO %s\n' "$1"; }
+  systemctl() { return 0; }
+
+  rm -f "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG"
+  out=$(do_check_unattended) || return 1
+  grep -q 'KO .*not configured' <<< "$out" || return 1
+
+  printf 'APT::Periodic::Unattended-Upgrade "1";\n' \
+    > "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG"
+  out=$(do_check_unattended) || return 1
+  grep -q '^OK ' <<< "$out" || return 1
+
+  systemctl() { return 1; }
+  out=$(do_check_unattended) || return 1
+  grep -q 'KO .*timer' <<< "$out" || return 1
+  # a stopped timer must not read as "the install never configured it"
+  ! grep -q 'not configured' <<< "$out"
+}
+
 test_configure_user_mode_skip() {
   USERNAME=someone
   USER_PASSWORD=secret
@@ -2200,6 +2244,9 @@ run_test "stop_apt_timers stops timers and services" test_stop_apt_timers_stops_
 run_test "stop_apt_timers survives missing units" test_stop_apt_timers_survives_missing_units
 run_test "restore_apt_timers starts both timers" test_restore_apt_timers_starts_both_timers
 run_test "restore_apt_timers survives missing units" test_restore_apt_timers_survives_missing_units
+run_test "cmd_install restores apt timers before the verifier" test_cmd_install_restores_apt_timers_before_the_verifier
+run_test "do_check delegates the unattended assertion" test_do_check_delegates_the_unattended_assertion
+run_test "unattended check names which half failed" test_do_check_unattended_names_which_half_failed
 run_test "cmd_install stops apt timers before the first apt call" test_cmd_install_stops_apt_timers_before_first_apt_call
 run_test "cmd_install restores apt timers on success" test_cmd_install_restores_apt_timers_on_success
 run_test "cmd_install restores apt timers when a step fails" test_cmd_install_restores_apt_timers_when_a_step_fails
