@@ -18,6 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 
 - **Root-only by default** — skip user creation for autonomous environments without sudo prompts, or create a non-root sudo user when you want one.
 - **Hardened SSH** — UFW exposes only the selected SSH port, fail2ban protects it, and key enrollment finishes by disabling both password authentication methods.
+- **Re-runnable lockdown** — `harden` redoes key enrollment and lockdown on its own, any time, as many times as you like, so losing your connection at the enrollment prompt costs nothing.
 - **Reliable package setup** — APT waits at most three minutes for background package locks instead of failing immediately during unattended upgrades.
 - **Batteries-included dev toolchain** — choose every default (Full install) or pick components from a grouped grid (Custom).
 - **Modular** — the wizard and verifier discover components from the same registry.
@@ -33,6 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-b
 | User | optional; skipped for the default root-only setup, otherwise creates a password-backed sudo user |
 | Firewall (UFW) | deny incoming; allow only `<your-port>/tcp`; close the default SSH port `:22` unless you select port 22 |
 | SSH hardening | custom port, managed drop-in, and a timestamped backup of `sshd_config` |
+| Recording install state | account and port to `/etc/vps-boot/config`, so `harden` and `check` need no arguments later |
 | fail2ban | sshd jail; 1h ban; 5 retries in 10 minutes |
 
 ### Toolchain — 23 components, toggleable in Custom mode
@@ -78,6 +80,8 @@ Custom opens a grouped grid rather than a flat list — components sit under the
 curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh | sudo bash -s install
 ```
 
+**Run it under `tmux` or `screen`.** The install takes around 45 minutes and ends on a prompt that waits on you, so over SSH a dropped connection is expected rather than exceptional. If one does drop, [`harden`](#re-run-hardening) finishes the job.
+
 `User account` is the first prompt and defaults to `skip`. Username and password are requested only when you choose to create a user:
 
 ```text
@@ -102,22 +106,44 @@ sudo ./vps-boot.sh install julien 2222  # pre-fill created username and SSH port
 sudo ./vps-boot.sh --help
 ```
 
-### Re-run verification
+### Re-run hardening
 
-Use the account and port selected during installation:
+Key enrollment and lockdown are their own command, idempotent and safe to run any number of times:
 
 ```bash
+sudo ./vps-boot.sh harden           # account from /etc/vps-boot/config
+sudo ./vps-boot.sh harden julien    # or name it explicitly
+```
+
+Remotely, when the install run lost its connection at the enrollment prompt:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh | sudo bash -s harden
+```
+
+`install` records the account and port in `/etc/vps-boot/config` as soon as SSH hardening completes — before the enrollment prompt that can strand the run — so `harden` needs no arguments afterwards. It takes **no port argument** on purpose: it reads the port the host is already on (recorded state, then the managed drop-in, then `sshd -T`), because a mistyped port would move the listener off the one you are connected through.
+
+It prints the same enrollment instructions as `install`, says so when the host is already locked down, and closes with either `Hardened — keys only` or `Pending — password auth is still on` plus the command to run again.
+
+### Re-run verification
+
+```bash
+sudo ./vps-boot.sh check                    # account and port from /etc/vps-boot/config
 sudo ./vps-boot.sh check root <port>        # root-only install
 sudo ./vps-boot.sh check <username> <port>  # install with a created user
 ```
 
-The verifier reads `/etc/vps-boot/components` when present, so it checks only the components selected during installation.
+Arguments override the recorded account and port; without them the verifier reads `/etc/vps-boot/config`, falling back to `root` and port 1986 when there is no state file. It also reads `/etc/vps-boot/components` when present, so it checks only the components selected during installation.
+
+An un-hardened host is reported as a warning rather than a failure — leaving password auth on can be a deliberate choice — and the warning names the `harden` command that closes it.
 
 ## After install — push your SSH key
 
 The wizard pauses with copy-pasteable commands for Linux/macOS and Windows, filled with the selected account, VPS IP, and port. Verify the key in a new terminal before choosing `ok`.
 
-Choosing `ok` requests lockdown, but lockdown proceeds only after `authorized_keys` exists and `ssh-keygen` confirms it contains a valid SSH key. Only then does vps-boot set `PasswordAuthentication no` and `KbdInteractiveAuthentication no`, validate the resulting sshd configuration, reload `ssh.service`, and—for a root-only install—change root to key-only access (`PermitRootLogin prohibit-password`). Created-user installs already have root login disabled. A missing or invalid key, or choosing `skip`, leaves password authentication enabled and the verifier reports a warning.
+Choosing `ok` requests lockdown, but lockdown proceeds only after `authorized_keys` exists and `ssh-keygen` confirms it contains a valid SSH key. Only then does vps-boot set `PasswordAuthentication no` and `KbdInteractiveAuthentication no`, validate the resulting sshd configuration, reload `ssh.service`, and—for a root-only install—change root to key-only access (`PermitRootLogin prohibit-password`). Created-user installs already have root login disabled. A missing or invalid key, or choosing `skip`, leaves password authentication enabled and the verifier reports a warning naming the `harden` command that fixes it.
+
+None of this is a one-shot: [`harden`](#re-run-hardening) runs exactly the same enrollment and lockdown on its own, so a missed key, a `skip` you changed your mind about, or a connection that dropped at the prompt all recover the same way.
 
 ## Adding a component
 
@@ -127,7 +153,7 @@ The toolchain is a registry. Adding a new tool (for example, `btop`) requires an
 
 Locked yourself out? Open your provider's web-based root console. The installer backs up `/etc/ssh/sshd_config` before editing and writes its settings to `/etc/ssh/sshd_config.d/00-vps-boot.conf`. Restore the backup and remove or correct the managed drop-in, then run `sshd -t` before reloading `ssh.service`.
 
-After recovery, verify the matching setup with `check root <port>` for root-only or `check <username> <port>` for a created user.
+After recovery, re-apply the lockdown with `harden` and verify the matching setup with `check root <port>` for root-only or `check <username> <port>` for a created user.
 
 If installation fails, the failed step includes the last 15 lines of `/tmp/vps-boot.log`. The script stops on the first failure; fresh-server re-runs are not supported in this round, so rebuilding the VPS is usually the cleanest recovery.
 

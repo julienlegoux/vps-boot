@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # vps-boot.sh — single-shot Ubuntu LTS hardening + dev toolchain
 # Usage: sudo ./vps-boot.sh install [username] [port]
+#        sudo ./vps-boot.sh harden  [username]
 #        sudo ./vps-boot.sh check   [username] [port]
 #        sudo ./vps-boot.sh --help
 #
@@ -24,6 +25,11 @@ readonly SSHD_CONFIG="${VPS_BOOT_SSHD_CONFIG:-/etc/ssh/sshd_config}"
 readonly SSHD_DROPIN="${VPS_BOOT_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-vps-boot.conf}"
 readonly STATE_DIR="${VPS_BOOT_STATE_DIR:-/etc/vps-boot}"
 readonly STATE_FILE="$STATE_DIR/components"
+readonly STATE_CONFIG="$STATE_DIR/config"
+# The canonical remote invocation. Shared by --help and by the hint `harden`
+# prints when there is no script on disk to re-run — under `curl | sudo bash`
+# $0 is "bash", so telling the operator to run "$0 harden" is useless.
+readonly REMOTE_URL="https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh"
 # rustup is installed system-wide rather than under $HOME. Both install_rust
 # and check_rust read these, so the two cannot point at different trees.
 readonly RUSTUP_HOME_DIR="${VPS_BOOT_RUSTUP_HOME:-/usr/local/rustup}"
@@ -1882,6 +1888,25 @@ sshd_root_matches_policy() {
   esac
 }
 
+# hardening_is_applied — true when this host is in the locked-down state
+# lockdown_ssh produces: password methods off, and root either key-only (root
+# install) or refused outright (created user).
+#
+# Deliberately derived from `sshd -T` rather than from a marker file: the drop-in
+# can be hand-edited during a lockout recovery, and a marker that disagrees with
+# the running daemon is worse than no marker at all.
+hardening_is_applied() {
+  local password_auth root_login
+  password_auth=$(sshd_effective_value passwordauthentication || true)
+  [[ "$password_auth" == "no" ]] || return 1
+  root_login=$(sshd_effective_value permitrootlogin || true)
+  if [[ "$USERNAME" == "root" ]]; then
+    sshd_root_is_key_only "$root_login"
+  else
+    [[ "$root_login" == "no" ]]
+  fi
+}
+
 validate_sshd_listeners() {
   local effective=$1 entry address port
   local found_listener=0 found_remote=0
@@ -2074,18 +2099,84 @@ EOF
 }
 
 # ════════════════════════════════════════════════════════════════════════════
+# State
+# ════════════════════════════════════════════════════════════════════════════
+
+# write_state_config — record the account and port this host was set up with,
+# so `harden` needs no arguments. cmd_install calls it as soon as the port is
+# real (right after bl_ssh_harden) rather than at the end of the run: the
+# enrollment prompt that follows waits on a human and can be killed by a
+# dropped connection, and `harden` still has to resolve its target afterwards.
+write_state_config() {
+  local candidate
+  install -d -m 0755 "$STATE_DIR"
+  candidate=$(mktemp "$STATE_DIR/.vps-boot-config.XXXXXX")
+  if ! cat > "$candidate" <<EOF
+# Managed by vps-boot
+USERNAME=$USERNAME
+SSH_PORT=$SSH_PORT
+EOF
+  then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! chmod 0644 "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! mv -f "$candidate" "$STATE_CONFIG"; then
+    rm -f "$candidate"
+    return 1
+  fi
+}
+
+# read_state_config — load what write_state_config recorded into
+# STATE_USERNAME / STATE_SSH_PORT. Both stay empty when there is no state file:
+# a legacy install, or a host set up by hand.
+read_state_config() {
+  STATE_USERNAME=""
+  STATE_SSH_PORT=""
+  [[ -r "$STATE_CONFIG" ]] || return 0
+  local key value
+  while IFS='=' read -r key value; do
+    case "$key" in
+      USERNAME) STATE_USERNAME=$value ;;
+      SSH_PORT) STATE_SSH_PORT=$value ;;
+    esac
+  done < "$STATE_CONFIG"
+}
+
+# ════════════════════════════════════════════════════════════════════════════
 # SSH key enrollment
 # ════════════════════════════════════════════════════════════════════════════
 
+# harden_command — the exact command to re-run hardening on this host. $0 is
+# "bash" under `curl | sudo bash`, where there is no script on disk, so fall
+# back to the documented remote invocation instead of an unrunnable path.
+harden_command() {
+  if [[ -f "$0" ]]; then
+    printf 'sudo %s harden %s' "$0" "$USERNAME"
+  else
+    printf 'curl -fsSL %s | sudo bash -s harden %s' "$REMOTE_URL" "$USERNAME"
+  fi
+}
+
+# enroll_ssh_key ["section title"] — the shared enrollment + lockdown body,
+# reached inline from cmd_install and standalone from cmd_harden.
 enroll_ssh_key() {
+  local title=${1:-"Almost done — enroll your SSH key"}
   local user_home auth_keys vps_ip
   user_home=$(getent passwd "$USERNAME" | cut -d: -f6)
   auth_keys="$user_home/.ssh/authorized_keys"
   vps_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
   [[ -z "$vps_ip" ]] && vps_ip="<vps-ip>"
 
-  section "Almost done — enroll your SSH key"
+  section "$title"
   body ""
+  if hardening_is_applied; then
+    body "${C_DIM}This host is already locked down — password auth is off.${C_RESET}"
+    body ""
+  fi
   body "${C_BOLD}Linux / macOS:${C_RESET}"
   body "  ${C_CYAN}ssh-copy-id -p $SSH_PORT $USERNAME@$vps_ip${C_RESET}"
   body ""
@@ -2104,11 +2195,12 @@ enroll_ssh_key() {
   case "$choice" in
     ok)
       if [[ ! -s "$auth_keys" ]]; then
-        warn "No key found at $auth_keys. Push it first, then re-run: sudo $0 check $USERNAME $SSH_PORT"
+        warn "No key found at $auth_keys. Push it first, then run: $(harden_command)"
         return 0
       fi
       if ! ssh-keygen -l -f "$auth_keys" >/dev/null 2>&1; then
         warn "$auth_keys exists but contains no valid SSH key. Skipping lockdown."
+        warn "Fix the key, then run: $(harden_command)"
         return 0
       fi
       # belt-and-suspenders perms
@@ -2118,7 +2210,8 @@ enroll_ssh_key() {
       lockdown_ssh
       ;;
     skip)
-      # nothing to do — verifier will surface the "password auth still on" warning
+      # nothing to do — the verifier surfaces the "password auth still on"
+      # warning, and `harden` is the supported way back to a locked-down host
       :
       ;;
   esac
@@ -2319,6 +2412,11 @@ cmd_install() {
   fi
   step_run "Firewall (UFW)"              bl_ufw
   step_run "SSH hardening"               bl_ssh_harden
+  # The port is real from here on, so record it before anything else can fail or
+  # be killed — `harden` reads this to re-run the lockdown without arguments.
+  # A step of its own rather than a bare call: a failure here has to be visible,
+  # since everything downstream of the enrollment prompt depends on it.
+  step_run "Recording install state"     write_state_config
   step_run "fail2ban"                    bl_fail2ban
 
   local key
@@ -2376,13 +2474,85 @@ cmd_install_handle_signal() {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
+# cmd_harden — re-runnable SSH key enrollment + lockdown
+# ════════════════════════════════════════════════════════════════════════════
+
+# harden_resolve_target [username] — set USERNAME and SSH_PORT for a standalone
+# harden run.
+#
+# The port is never taken from the command line, which is why `harden` has no
+# port argument: writing a mistyped Port into the drop-in would move the
+# listener off the port the operator is currently connected through. It comes
+# from what the host already has — recorded state first, then the managed
+# drop-in, then sshd's own effective config.
+harden_resolve_target() {
+  local arg_user=${1:-}
+  read_state_config
+  USERNAME=${arg_user:-${STATE_USERNAME:-root}}
+  id "$USERNAME" &>/dev/null || die "User '$USERNAME' does not exist."
+
+  SSH_PORT=${STATE_SSH_PORT:-}
+  if [[ -z "$SSH_PORT" && -r "$SSHD_DROPIN" ]]; then
+    SSH_PORT=$(awk '$1 == "Port" { print $2; exit }' "$SSHD_DROPIN")
+  fi
+  if [[ -z "$SSH_PORT" ]]; then
+    # sshd -t/-T refuse to run without this dir — see validate_sshd_policy
+    install -d -m 0755 /run/sshd 2>/dev/null || true
+    SSH_PORT=$(sshd_effective_value port || true)
+  fi
+  valid_port "${SSH_PORT:-}" \
+    || die "Cannot determine this host's SSH port — check $SSHD_DROPIN."
+}
+
+# harden_report — the closing verdict for a harden run. Reads the live policy
+# rather than lockdown_ssh's exit code, so a skipped or refused lockdown is
+# reported as pending instead of silently looking like success.
+harden_report() {
+  PASS=0; FAIL=0; WARN=0
+  rail
+  if hardening_is_applied; then
+    if [[ "$USERNAME" == "root" ]]; then
+      ok "root login restricted to SSH keys"
+    else
+      ok "root login disabled"
+    fi
+    ok "password auth disabled"
+    done_section "Hardened — ${C_GREEN}keys only${C_RESET} on port $SSH_PORT"
+  else
+    note "password auth still enabled"
+    done_section "Pending — ${C_YELLOW}password auth is still on${C_RESET}"
+    body ""
+    body "Push your key, then run this again:"
+    body "  ${C_CYAN}$(harden_command)${C_RESET}"
+  fi
+  printf '\n'
+}
+
+# cmd_harden [username] — enrollment + lockdown as its own command. Idempotent
+# and short, so a dropped connection costs nothing: reconnect and run it again.
+cmd_harden() {
+  [[ $EUID -eq 0 ]] || die "Must run as root."
+
+  harden_resolve_target "${1:-}"
+  banner
+  enroll_ssh_key "Enroll your SSH key and lock down"
+  # Re-record: a legacy install, or one whose username came from argv, has no
+  # state file yet — after this the next run needs no arguments either.
+  write_state_config
+  harden_report
+}
+
+# ════════════════════════════════════════════════════════════════════════════
 # cmd_check — verifier (also called inline at end of cmd_install)
 # ════════════════════════════════════════════════════════════════════════════
 
 cmd_check() {
   [[ $EUID -eq 0 ]] || die "Must run as root."
-  USERNAME=${1:-root}
-  SSH_PORT=${2:-1986}
+  # Recorded state beats the hardcoded fallback: checking against a port the
+  # host is not on reports a wall of ✗ that says nothing about the host.
+  read_state_config
+  USERNAME=${1:-${STATE_USERNAME:-root}}
+  SSH_PORT=${2:-${STATE_SSH_PORT:-1986}}
   id "$USERNAME" &>/dev/null || die "User '$USERNAME' does not exist."
   valid_port "$SSH_PORT" || die "Invalid SSH port: $SSH_PORT"
 
@@ -2451,7 +2621,9 @@ do_check() {
     if sshd_root_is_key_only "$permit_root"; then
       ok "root login restricted to SSH keys"
     else
-      note "root password login still enabled"
+      # the runnable command goes in the footer, not here: harden_command's
+      # curl form is ~110 columns and a wrapped status line loses its rail
+      note "root password login still enabled — run 'harden'"
     fi
   elif [[ "$permit_root" == "no" ]]; then
     ok "root login disabled"
@@ -2482,7 +2654,7 @@ do_check() {
   elif [[ "$pa" != "$kbd" ]]; then
     ko "password authentication methods disagree (password=$pa, keyboard-interactive=$kbd)"
   else
-    note "password auth still enabled"
+    note "password auth still enabled — run 'harden'"
   fi
   local user_home auth_keys
   user_home=$(getent passwd "$USERNAME" | cut -d: -f6)
@@ -2544,12 +2716,30 @@ do_check() {
 
   done_section "Done — ${color}${PASS} passed${C_RESET}, ${color}${FAIL} failed${C_RESET}, ${color}${WARN} warning(s)${C_RESET}"
 
+  do_check_footer
+
+  (( FAIL == 0 )) || exit 1
+}
+
+# do_check_footer — the what-now block under the verifier summary: how to
+# connect, how to finish hardening if it is still pending, and the components'
+# own sign-in hints. Split out from do_check because it is pure presentation
+# and can be exercised without a live host underneath it.
+do_check_footer() {
   local vps_ip
   vps_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
   [[ -z "$vps_ip" ]] && vps_ip="<vps-ip>"
 
   body ""
   body "${C_BOLD}Connect:${C_RESET}  ssh -p $SSH_PORT $USERNAME@$vps_ip"
+
+  # The notes above only flag an open box; this is the line that closes it.
+  # The command lives here rather than in the note because harden_command's
+  # curl form is ~110 columns and a wrapped status line loses its rail.
+  if ! hardening_is_applied; then
+    body "${C_BOLD}Harden:${C_RESET}   password auth is still on — run:"
+    body "          ${C_CYAN}$(harden_command)${C_RESET}"
+  fi
 
   # ── post-install sign-in hints (component-owned, optional) ──
   local -a hints=()
@@ -2569,8 +2759,6 @@ do_check() {
     body "${C_DIM}Note: docker group membership requires a fresh login.${C_RESET}"
   fi
   printf '\n'
-
-  (( FAIL == 0 )) || exit 1
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -2583,18 +2771,29 @@ ${C_BOLD}vps-boot${C_RESET} — single-shot Ubuntu LTS hardening + dev toolchain
 
 ${C_BOLD}USAGE${C_RESET}
   sudo $0 install [username] [port]
+  sudo $0 harden  [username]
   sudo $0 check   [username] [port]
   sudo $0 --help
 
 ${C_BOLD}COMMANDS${C_RESET}
   install   Run the interactive wizard as root (default) or create a sudo user.
             Args (optional) pre-fill the created username and SSH port prompts.
+  harden    Re-run SSH key enrollment and lockdown. Idempotent, safe any time.
+            The username defaults to what install recorded in $STATE_CONFIG.
   check     Re-run the verifier on an existing vps-boot install.
-            Args (optional) default to root and SSH port 1986.
+            Args (optional) default to what install recorded in $STATE_CONFIG,
+            then to root and SSH port 1986.
 
 ${C_BOLD}REMOTE${C_RESET}
-  curl -fsSL https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh \\
+  curl -fsSL $REMOTE_URL \\
     | sudo bash -s install
+
+  Run it under tmux or screen: the install takes ~45 minutes and the enrollment
+  prompt waits on you, so a dropped connection is expected rather than rare.
+  If one does drop, reconnect and finish with:
+
+  curl -fsSL $REMOTE_URL \\
+    | sudo bash -s harden
 
 EOF
 }
@@ -2605,6 +2804,10 @@ main() {
     install)
       shift
       cmd_install "$@"
+      ;;
+    harden)
+      shift
+      cmd_harden "$@"
       ;;
     check)
       shift

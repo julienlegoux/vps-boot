@@ -90,7 +90,9 @@ being selected. `bl_unattended` installs `unattended-upgrades` and enables the
 security pocket only, `Automatic-Reboot` left `false`; it enables
 `apt-daily-upgrade.timer` for future boots but deliberately without `--now` (see
 "apt/dpkg lock handling" below). `bl_user` is the one conditional step, skipped
-in root-only mode.
+in root-only mode. A seventh, non-`bl_` step sits between `bl_ssh_harden` and
+`bl_fail2ban`: `write_state_config`, run through `step_run` like the rest so a
+failure is visible rather than an unexplained abort.
 
 **apt/dpkg lock handling (issue #43).** `DPkg::Lock::Timeout` (written by
 `install_apt_lock_timeout` to `APT_LOCK_CONFIG`) only bounds dpkg's own lock wait
@@ -111,10 +113,15 @@ mitigations close this, both added for issue #43:
   them once the run is done — success or failure, via `cmd_install_cleanup`
   on the same `EXIT` trap that removes the lock-timeout fragment.
 
-**Flows.** `main` dispatches to `cmd_install`, `cmd_check`, or `cmd_help`.
-`cmd_install` is wizard → confirm → run → `enroll_ssh_key` → `do_check`.
-`cmd_check` reconstructs the component list from persisted state, then calls the
-same `do_check`, so the inline and standalone verifier are one code path.
+**Flows.** `main` dispatches to `cmd_install`, `cmd_harden`, `cmd_check`, or
+`cmd_help`. `cmd_install` is wizard → confirm → run → `enroll_ssh_key` →
+`do_check`. `cmd_check` reconstructs the component list from persisted state,
+then calls the same `do_check`, so the inline and standalone verifier are one code
+path. `cmd_harden` (`:2531-2543`) is enrollment → lockdown on its own: it resolves
+its target from persisted state and calls the same `enroll_ssh_key`, so the inline
+and standalone lockdown are likewise one code path. Unlike `install`, it is
+idempotent by contract — it is the supported way back to a hardened host when the
+enrollment prompt is interrupted, so re-running it must always be safe.
 
 **Sourcing guard.** `vps-boot.sh:2512-2514` runs `main` only when the file is
 executed rather than sourced, and the guard also treats an empty `BASH_SOURCE[0]`
@@ -136,6 +143,7 @@ test harness can redirect them into a temp directory (`vps-boot.sh:16-30`).
 | Path | Constant | Purpose |
 |---|---|---|
 | `/etc/vps-boot/components` | `STATE_FILE` | Enabled component keys, one per line. Written at the end of the run phase; read by standalone `check` |
+| `/etc/vps-boot/config` | `STATE_CONFIG` | `USERNAME=` / `SSH_PORT=`. Written by `write_state_config` immediately after the `bl_ssh_harden` step — not at the end of the run — because the enrollment prompt that follows can be killed by a dropped connection and `harden` must still resolve its target. Read by standalone `check` and `harden`, argv overriding |
 | `/tmp/vps-boot.log` | `LOG_FILE` | Per-step stdout+stderr, truncated at install start |
 | `/etc/ssh/sshd_config.d/00-vps-boot.conf` | `SSHD_DROPIN` | The managed sshd settings — `Port`, `PermitRootLogin`, `PasswordAuthentication`, `KbdInteractiveAuthentication` |
 | `/etc/ssh/sshd_config.bak.<epoch>` | — | Timestamped backup taken once by `bl_ssh_harden` |
@@ -150,8 +158,10 @@ test harness can redirect them into a temp directory (`vps-boot.sh:16-30`).
 (`vps-boot.sh:1489`, `:1492`) rather than using `$SUDOERS_DIR`, so unlike every other
 state path it is not redirectable under test.
 
-The state file is the only thing that survives to inform a later `check`. When it
-is absent, `cmd_check` falls back to checking every registered component.
+These two files are the only things that survive to inform a later `check` or
+`harden`. When `components` is absent, `cmd_check` falls back to checking every
+registered component; when `config` is absent, both commands fall back to argv,
+then to `root` / port `1986` for `check` and to the live sshd config for `harden`.
 
 ## Auth
 
@@ -161,13 +171,25 @@ There is no application auth. The subject is the host's SSH access policy.
 password authentication *on*, so the operator can still get in to push a key. Root
 login is `yes` in root-only mode and `no` when a user was created.
 
-**Lockdown** is a separate, opt-in step. `enroll_ssh_key` (`:2013-2058`) prints
-copy-pasteable `ssh-copy-id` commands, then offers `ok` / `skip`. Choosing `ok`
-does not by itself lock down — `authorized_keys` must be non-empty *and*
-`ssh-keygen -l` must parse it as a real key. Only then does `lockdown_ssh` set
-`PasswordAuthentication no`, `KbdInteractiveAuthentication no`, and
-`PermitRootLogin prohibit-password` for root-only installs. A missing or malformed
-key leaves password auth on and warns.
+**Lockdown** is a separate, opt-in, re-runnable step. `enroll_ssh_key`
+(`:2166-2222`) prints copy-pasteable `ssh-copy-id` commands, then offers
+`ok` / `skip`. Choosing `ok` does not by itself lock down — `authorized_keys` must
+be non-empty *and* `ssh-keygen -l` must parse it as a real key. Only then does
+`lockdown_ssh` set `PasswordAuthentication no`,
+`KbdInteractiveAuthentication no`, and `PermitRootLogin prohibit-password` for
+root-only installs. A missing or malformed key leaves password auth on and warns,
+naming the `harden` command that closes it.
+
+**Every path that leaves the host un-hardened has a way back**: `vps-boot.sh
+harden` reaches the same `enroll_ssh_key`, so a `skip`, a missing key, or a
+connection dropped at the prompt all recover identically. Two constraints hold it
+safe. `harden` takes **no port argument** (`harden_resolve_target`, `:2486-2513`)
+and resolves the port from recorded state → the managed drop-in → `sshd -T`,
+because a mistyped port written into the drop-in as `Port` would move the listener
+off the port the operator is connected through. And "is this host hardened" is
+answered by `hardening_is_applied` reading `sshd -T`, never by a marker file: the
+drop-in gets hand-edited during a lockout recovery, and a marker that disagrees
+with the running daemon is worse than none.
 
 **Policy is verified against effective config, not the file.** `apply_sshd_policy`
 (`:1915-1948`) writes the drop-in, then `validate_sshd_policy` runs `sshd -t` and
@@ -188,9 +210,11 @@ retries in 10 minutes, `backend = systemd`.
 
 ## Interfaces & integrations
 
-**CLI** — `install [username] [port]`, `check [username] [port]`, `--help`. Both
-`install` and `check` require `EUID -eq 0`. `check` defaults to `root` and port
-`1986`.
+**CLI** — `install [username] [port]`, `harden [username]`,
+`check [username] [port]`, `--help`. All three commands require `EUID -eq 0`.
+`check` and `harden` default their arguments to `/etc/vps-boot/config`; `check`
+then falls back to `root` and port `1986`. `harden` deliberately exposes no port
+argument.
 
 **Interactive TTY.** The wizard is the primary interface: `prompt_text`,
 `prompt_password`, `prompt_radio`, `prompt_multiselect`. Every read is redirected

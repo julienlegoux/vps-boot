@@ -1537,6 +1537,345 @@ test_root_lockdown_is_key_only() {
   ! sshd_root_is_key_only yes
 }
 
+# ── re-runnable hardening (issue #45) ───────────────────────────────────────
+# The enroll prompt is the longest window in the whole run: it waits on a human
+# right after the SSH port moved. A dropped connection there used to leave the
+# host with password auth open and no supported way back. These cases pin the
+# `harden` subcommand that replaced that dead end.
+
+test_state_config_round_trips_username_and_port() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  [[ -f $VPS_BOOT_STATE_DIR/config ]] || return 1
+  USERNAME=""
+  SSH_PORT=""
+  read_state_config || return 1
+  [[ $STATE_USERNAME == alice ]] || return 1
+  [[ $STATE_SSH_PORT == 2222 ]]
+}
+
+test_write_state_config_cleans_candidate_after_chmod_failure() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  chmod() { return 23; }
+  ! write_state_config || return 1
+  # the previous file survives and no candidate is left behind
+  grep -qx 'USERNAME=alice' "$VPS_BOOT_STATE_DIR/config" || return 1
+  [[ -z $(find "$VPS_BOOT_STATE_DIR" -name '.vps-boot-config.*' 2>/dev/null) ]]
+}
+
+test_read_state_config_tolerates_a_missing_file() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  read_state_config || return 1
+  [[ -z $STATE_USERNAME && -z $STATE_SSH_PORT ]]
+}
+
+test_harden_resolves_the_target_from_recorded_state() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  id() { return 0; }
+  USERNAME=""
+  SSH_PORT=""
+  harden_resolve_target "" || return 1
+  [[ $USERNAME == alice ]] || return 1
+  [[ $SSH_PORT == 2222 ]]
+}
+
+test_harden_username_argument_overrides_recorded_state() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  id() { return 0; }
+  harden_resolve_target bob || return 1
+  [[ $USERNAME == bob ]] || return 1
+  [[ $SSH_PORT == 2222 ]]
+}
+
+test_harden_falls_back_to_the_managed_dropin_port() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  mkdir -p "$(dirname "$VPS_BOOT_SSHD_DROPIN")"
+  write_previous_sshd_dropin || return 1
+  id() { return 0; }
+  # the drop-in answers the question, so sshd must not be consulted at all
+  sshd() { return 1; }
+  harden_resolve_target root || return 1
+  [[ $SSH_PORT == 2200 ]]
+}
+
+test_harden_falls_back_to_the_effective_sshd_port() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  rm -f "$VPS_BOOT_SSHD_DROPIN"
+  id() { return 0; }
+  install() { return 0; }
+  sshd() { printf 'port 2244\n'; }
+  harden_resolve_target root || return 1
+  [[ $SSH_PORT == 2244 ]]
+}
+
+test_harden_dies_when_the_port_cannot_be_resolved() {
+  # Guessing here is what a port argument would invite: writing the wrong Port
+  # into the drop-in moves the listener off the port the operator is on.
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  rm -f "$VPS_BOOT_SSHD_DROPIN"
+  id() { return 0; }
+  install() { return 0; }
+  sshd() { return 1; }
+  local out
+  out=$(harden_resolve_target root 2>&1) && return 1
+  grep -q 'SSH port' <<< "$out"
+}
+
+test_hardening_is_applied_reads_the_effective_policy() {
+  sshd() {
+    printf '%s\n' 'passwordauthentication no' 'permitrootlogin prohibit-password'
+  }
+  USERNAME=root
+  hardening_is_applied || return 1
+  # key-only root is the locked state for a root install, not for a created
+  # user — there, root login must be off outright
+  USERNAME=alice
+  ! hardening_is_applied || return 1
+  sshd() {
+    printf '%s\n' 'passwordauthentication no' 'permitrootlogin no'
+  }
+  hardening_is_applied || return 1
+  sshd() {
+    printf '%s\n' 'passwordauthentication yes' 'permitrootlogin no'
+  }
+  ! hardening_is_applied
+}
+
+test_harden_command_uses_the_curl_form_when_there_is_no_script_on_disk() {
+  local piped on_disk
+  piped=$(bash -c 'script=$1; source "$script"; USERNAME=alice; harden_command' \
+    bash "$SCRIPT") || return 1
+  grep -q '^curl -fsSL http' <<< "$piped" || return 1
+  grep -q 'bash -s harden alice$' <<< "$piped" || return 1
+  USERNAME=alice
+  on_disk=$(harden_command) || return 1
+  [[ $on_disk == "sudo $0 harden alice" ]]
+}
+
+test_enroll_without_a_key_points_at_the_harden_command() {
+  section() { :; }
+  body() { :; }
+  rail() { :; }
+  prompt_radio() { local outvar=$2; printf -v "$outvar" '%s' ok; }
+  getent() { printf 'alice:x:1000:1000::%s:/bin/bash\n' "$TEST_ROOT/enroll-nokey"; }
+  hostname() { printf '203.0.113.7\n'; }
+  hardening_is_applied() { return 1; }
+  USERNAME=alice
+  SSH_PORT=2222
+  rm -rf "$TEST_ROOT/enroll-nokey"
+  local out
+  out=$(enroll_ssh_key 2>&1) || return 1
+  grep -q 'harden' <<< "$out" || return 1
+  # `check` verifies, it does not harden — pointing there was the dead end
+  ! grep -q ' check ' <<< "$out"
+}
+
+test_enroll_locks_down_when_a_valid_key_exists() {
+  local lockdown_log="$TEST_ROOT/enroll-lockdown"
+  section() { :; }
+  body() { :; }
+  rail() { :; }
+  prompt_radio() { local outvar=$2; printf -v "$outvar" '%s' ok; }
+  getent() { printf 'alice:x:1000:1000::%s:/bin/bash\n' "$TEST_ROOT/enroll-home"; }
+  hostname() { printf '203.0.113.7\n'; }
+  ssh-keygen() { return 0; }
+  chown() { return 0; }
+  chmod() { return 0; }
+  hardening_is_applied() { return 1; }
+  lockdown_ssh() { printf 'locked\n' >> "$lockdown_log"; }
+  USERNAME=alice
+  SSH_PORT=2222
+  rm -f "$lockdown_log"
+  rm -rf "$TEST_ROOT/enroll-home"
+  mkdir -p "$TEST_ROOT/enroll-home/.ssh"
+  printf 'ssh-ed25519 AAAAC3Nza test\n' > "$TEST_ROOT/enroll-home/.ssh/authorized_keys"
+  enroll_ssh_key >/dev/null 2>&1 || return 1
+  [[ $(cat "$lockdown_log") == locked ]]
+}
+
+test_enroll_announces_an_already_hardened_host() {
+  # Standalone re-runs are the normal path now, so the prompt has to say what
+  # state the host is already in rather than implying nothing has happened.
+  local out
+  section() { :; }
+  rail() { :; }
+  body() { printf 'BODY %s\n' "$1"; }
+  prompt_radio() { local outvar=$2; printf -v "$outvar" '%s' skip; }
+  getent() { printf 'alice:x:1000:1000::%s:/bin/bash\n' "$TEST_ROOT/enroll-home"; }
+  hostname() { printf '203.0.113.7\n'; }
+  USERNAME=alice
+  SSH_PORT=2222
+  hardening_is_applied() { return 0; }
+  out=$(enroll_ssh_key 2>&1) || return 1
+  grep -qi 'already' <<< "$out" || return 1
+  hardening_is_applied() { return 1; }
+  out=$(enroll_ssh_key 2>&1) || return 1
+  ! grep -qi 'already' <<< "$out"
+}
+
+test_harden_report_distinguishes_hardened_from_pending() {
+  local out
+  rail() { :; }
+  done_section() { printf 'DONE %s\n' "$1"; }
+  body() { printf 'BODY %s\n' "$1"; }
+  ok() { printf 'OK %s\n' "$1"; }
+  note() { printf 'NOTE %s\n' "$1"; }
+  USERNAME=root
+  SSH_PORT=2222
+  hardening_is_applied() { return 0; }
+  out=$(harden_report) || return 1
+  grep -q 'OK password auth disabled' <<< "$out" || return 1
+  grep -q 'DONE .*keys only' <<< "$out" || return 1
+  hardening_is_applied() { return 1; }
+  out=$(harden_report) || return 1
+  grep -q 'NOTE password auth still enabled' <<< "$out" || return 1
+  grep -q 'BODY .*harden' <<< "$out"
+}
+
+test_cmd_harden_records_state_and_reports_after_enrollment() {
+  # `die` is stubbed so the root precondition does not end the case on a
+  # non-root dev box; its trace line is filtered out so the ordering assertion
+  # reads the same under root, where the stub never fires.
+  local trace="$TEST_ROOT/harden-trace"
+  rm -f "$trace"
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  die() { printf 'die:%s\n' "$1" >> "$trace"; }
+  banner() { printf 'banner\n' >> "$trace"; }
+  enroll_ssh_key() { printf 'enroll\n' >> "$trace"; }
+  harden_report() { printf 'report\n' >> "$trace"; }
+  id() { return 0; }
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  USERNAME=""
+  SSH_PORT=""
+  cmd_harden >/dev/null 2>&1 || return 1
+  [[ $(grep -v '^die:' "$trace") == "banner
+enroll
+report" ]] || return 1
+  grep -qx 'USERNAME=alice' "$VPS_BOOT_STATE_DIR/config" || return 1
+  grep -qx 'SSH_PORT=2222' "$VPS_BOOT_STATE_DIR/config"
+}
+
+test_cmd_check_defaults_to_recorded_state() {
+  # Same `die` stub reasoning as the cmd_harden case above. Checking against a
+  # port the host is not on reports a wall of ✗ that says nothing about it.
+  local checked="$TEST_ROOT/check-target"
+  rm -f "$checked"
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  die() { :; }
+  banner() { :; }
+  id() { return 0; }
+  do_check() { printf '%s:%s\n' "$USERNAME" "$SSH_PORT" >> "$checked"; }
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  USERNAME=""
+  SSH_PORT=""
+  cmd_check >/dev/null 2>&1 || return 1
+  # explicit arguments still win over what was recorded
+  cmd_check bob 2200 >/dev/null 2>&1 || return 1
+  [[ $(cat "$checked") == "alice:2222
+bob:2200" ]]
+}
+
+test_main_routes_the_harden_command() {
+  cmd_harden() { printf 'harden:%s\n' "${1:-}"; }
+  [[ $(main harden alice) == 'harden:alice' ]] || return 1
+  [[ $(main harden) == 'harden:' ]]
+}
+
+test_cmd_install_records_state_before_enrollment() {
+  # The whole point of issue #45: whatever `harden` needs to resolve its target
+  # must be on disk before the run reaches the prompt that can strand it — and
+  # after bl_ssh_harden, which is what makes the recorded port real.
+  local src ssh_line state_line enroll_line
+  src=$(declare -f cmd_install)
+  ssh_line=$(grep -n 'bl_ssh_harden' <<< "$src" | head -1 | cut -d: -f1)
+  state_line=$(grep -n 'write_state_config' <<< "$src" | head -1 | cut -d: -f1)
+  enroll_line=$(grep -n 'enroll_ssh_key' <<< "$src" | head -1 | cut -d: -f1)
+  [[ -n $ssh_line && -n $state_line && -n $enroll_line ]] || return 1
+  (( ssh_line < state_line )) || return 1
+  (( state_line < enroll_line ))
+}
+
+test_check_notes_name_the_harden_command() {
+  # A silent warning on an open password-auth box is what left the host
+  # un-hardened with nothing to act on.
+  local src pattern matches
+  src=$(declare -f do_check)
+  pattern='note "(root password login|password auth) still enabled'
+  matches=$(grep -cE "$pattern" <<< "$src")
+  (( matches == 2 )) || return 1
+  matches=$(grep -E "$pattern" <<< "$src" | grep -c 'harden')
+  (( matches == 2 ))
+}
+
+test_check_notes_stay_inside_the_rail() {
+  # The runnable command lives in the footer precisely because harden_command's
+  # curl form is ~110 columns; a status line that wraps loses its rail prefix.
+  local src line
+  src=$(declare -f do_check; declare -f do_check_footer)
+  while IFS= read -r line; do
+    if [[ $line == *harden_command* ]]; then
+      printf 'harden_command inside a status line: %s\n' "$line" >&2
+      return 1
+    fi
+  done < <(grep -E '^ *(ok|ko|note) "' <<< "$src")
+  # ...and the footer does carry it
+  src=$(declare -f do_check_footer)
+  grep -q 'Harden:' <<< "$src" || return 1
+  grep -q 'harden_command' <<< "$src"
+}
+
+test_check_footer_offers_harden_only_when_pending() {
+  local out
+  PASS=0; FAIL=0; WARN=0
+  rail() { :; }
+  done_section() { :; }
+  body() { printf 'BODY %s\n' "$1"; }
+  hostname() { printf '203.0.113.7\n'; }
+  ENABLED_COMPONENTS=()
+  USERNAME=alice
+  SSH_PORT=2222
+  hardening_is_applied() { return 1; }
+  out=$(do_check_footer 2>&1) || return 1
+  grep -q 'BODY .*Harden:' <<< "$out" || return 1
+  grep -q "BODY .*harden alice" <<< "$out" || return 1
+  hardening_is_applied() { return 0; }
+  out=$(do_check_footer 2>&1) || return 1
+  ! grep -q 'Harden:' <<< "$out"
+}
+
+test_help_documents_the_harden_command() {
+  local out
+  out=$(cmd_help)
+  # the usage line, not the "hardening + dev toolchain" tagline
+  grep -qE 'harden +\[username\]' <<< "$out" || return 1
+  grep -qE '^  harden ' <<< "$out" || return 1
+  # harden deliberately takes no port argument
+  ! grep -qE 'harden.*port' <<< "$out"
+}
+
+test_readme_documents_rerunnable_hardening() {
+  local readme="$ROOT_DIR/README.md"
+  grep -qE 'vps-boot\.sh harden' "$readme" || return 1
+  grep -qE 'bash -s harden' "$readme" || return 1
+  grep -q '/etc/vps-boot/config' "$readme" || return 1
+  grep -qiE 'tmux|screen' "$readme"
+}
+
 test_install_caddy_never_calls_ufw() {
   # The firewall is bl_ufw's business; install_caddy must never open a port
   # itself. Guard the source directly so a future edit that slips in a
@@ -1896,6 +2235,29 @@ run_test "invalid SSH config is not reloaded" test_invalid_sshd_config_is_not_re
 run_test "SSH lockdown stops after drop-in write failure" test_lockdown_stops_when_dropin_write_fails
 run_test "effective SSH values come from sshd -T" test_sshd_effective_value_reads_sshd_T
 run_test "root lockdown is key-only" test_root_lockdown_is_key_only
+run_test "state config round-trips username and port" test_state_config_round_trips_username_and_port
+run_test "write_state_config cleans candidate after chmod failure" test_write_state_config_cleans_candidate_after_chmod_failure
+run_test "read_state_config tolerates a missing file" test_read_state_config_tolerates_a_missing_file
+run_test "harden resolves its target from recorded state" test_harden_resolves_the_target_from_recorded_state
+run_test "harden username argument overrides recorded state" test_harden_username_argument_overrides_recorded_state
+run_test "harden falls back to the managed drop-in port" test_harden_falls_back_to_the_managed_dropin_port
+run_test "harden falls back to the effective sshd port" test_harden_falls_back_to_the_effective_sshd_port
+run_test "harden dies when the port cannot be resolved" test_harden_dies_when_the_port_cannot_be_resolved
+run_test "hardening_is_applied reads the effective policy" test_hardening_is_applied_reads_the_effective_policy
+run_test "harden command uses the curl form off disk" test_harden_command_uses_the_curl_form_when_there_is_no_script_on_disk
+run_test "enrollment without a key points at harden" test_enroll_without_a_key_points_at_the_harden_command
+run_test "enrollment locks down when a valid key exists" test_enroll_locks_down_when_a_valid_key_exists
+run_test "enrollment announces an already hardened host" test_enroll_announces_an_already_hardened_host
+run_test "harden report distinguishes hardened from pending" test_harden_report_distinguishes_hardened_from_pending
+run_test "cmd_harden records state and reports after enrollment" test_cmd_harden_records_state_and_reports_after_enrollment
+run_test "cmd_check defaults to recorded state" test_cmd_check_defaults_to_recorded_state
+run_test "main routes the harden command" test_main_routes_the_harden_command
+run_test "cmd_install records state before enrollment" test_cmd_install_records_state_before_enrollment
+run_test "check notes name the harden command" test_check_notes_name_the_harden_command
+run_test "check notes stay inside the rail" test_check_notes_stay_inside_the_rail
+run_test "check footer offers harden only when pending" test_check_footer_offers_harden_only_when_pending
+run_test "help documents the harden command" test_help_documents_the_harden_command
+run_test "README documents re-runnable hardening" test_readme_documents_rerunnable_hardening
 run_test "install_caddy never calls ufw" test_install_caddy_never_calls_ufw
 run_test "check_caddy reports version and open UFW ports as ok" test_check_caddy_reports_version_and_open_ufw_as_ok
 run_test "check_caddy notes closed UFW ports without failing" test_check_caddy_notes_closed_ufw_ports_without_failing
