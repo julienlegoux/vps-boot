@@ -108,8 +108,17 @@ mitigations close this, both added for issue #43:
 - `stop_apt_timers`/`restore_apt_timers` remove the race outright for the
   duration of an install: `cmd_install` stops both timers (and their services,
   to kill any run already in flight) before the first apt call, and restores
-  them once the run is done — success or failure, via `cmd_install_cleanup`
-  on the same `EXIT` trap that removes the lock-timeout fragment.
+  them as soon as the last apt consumer is done — after `enroll_ssh_key` and
+  *before* `do_check`. That ordering is load-bearing (issue #49): since
+  `bl_unattended` enables `apt-daily-upgrade.timer` without `--now`, the timer
+  is inactive for the whole window, so a verifier run inside it reports a false
+  ✗ on every install. Closing the window early is safe because no `apt`
+  invocation exists in `do_check` or in any `check_*`. The same pair also runs
+  from `cmd_install_cleanup` on the `EXIT`/`HUP`/`INT`/`TERM` traps, so a killed
+  run restores them too; both paths are idempotent, and a run killed *before*
+  the traps are armed (SIGKILL, power loss) leaves the timers stopped — which is
+  what `do_check_unattended` now reports as its own distinct failure rather than
+  folding into "not configured".
 
 **Flows.** `main` dispatches to `cmd_install`, `cmd_check`, or `cmd_help`.
 `cmd_install` is wizard → confirm → run → `enroll_ssh_key` → `do_check`.
