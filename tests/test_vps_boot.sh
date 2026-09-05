@@ -81,6 +81,7 @@ test_registry_entries_are_well_formed() {
 }
 
 test_probe_java_lts_jdk_only_probes_lts_majors() {
+  apt-cache() { printf 'Candidate: 25.0.4+7\n'; }
   # For Java, "newest installable" and "newest LTS" are not the same thing —
   # the probe must only ever call apt --dry-run on LTS majors (17/21/25/29/33/...,
   # i.e. (n - 21) % 4 == 0), never on 22/23/24/26. Simulate noble: only 25 has
@@ -118,6 +119,7 @@ test_check_java_reports_version_via_stderr_redirect() {
     [[ $1 == -version ]] || return 1
     printf 'openjdk version "25.0.3" 2025-09-16\n' >&2
   }
+  javac() { printf 'javac 25.0.3\n'; }
   PASS=0 FAIL=0
   local out
   out=$(check_java)
@@ -372,26 +374,31 @@ test_wait_for_apt_precedes_every_apt_update_or_install_call() {
 
 test_stop_apt_timers_stops_timers_and_services() {
   local systemctl_log="$TEST_ROOT/stop-timers-systemctl-calls"
-  systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
+  systemctl() {
+    printf '%s\n' "$*" >> "$systemctl_log"
+    [[ $1 != is-active ]]
+  }
 
   stop_apt_timers
 
   grep -q 'apt-daily.timer' "$systemctl_log" || return 1
   grep -q 'apt-daily-upgrade.timer' "$systemctl_log" || return 1
-  grep -q 'apt-daily.service' "$systemctl_log" || return 1
-  grep -q 'apt-daily-upgrade.service' "$systemctl_log" || return 1
+  ! grep -qE '^stop .*\.service' "$systemctl_log" || return 1
   grep -q '^stop' "$systemctl_log"
 }
 
 test_stop_apt_timers_survives_missing_units() {
   systemctl() { return 1; }
-  stop_apt_timers
+  ! stop_apt_timers
 }
 
 test_restore_apt_timers_starts_both_timers() {
   local systemctl_log="$TEST_ROOT/restore-timers-systemctl-calls"
   systemctl() { printf '%s\n' "$*" >> "$systemctl_log"; }
 
+  mkdir -p "$JOURNAL_DIR"
+  printf active > "$JOURNAL_DIR/apt-daily.timer"
+  printf active > "$JOURNAL_DIR/apt-daily-upgrade.timer"
   restore_apt_timers
 
   grep -q '^start.*apt-daily.timer' "$systemctl_log" || return 1
@@ -400,7 +407,53 @@ test_restore_apt_timers_starts_both_timers() {
 
 test_restore_apt_timers_survives_missing_units() {
   systemctl() { return 1; }
-  restore_apt_timers
+  mkdir -p "$JOURNAL_DIR"
+  printf active > "$JOURNAL_DIR/apt-daily.timer"
+  ! restore_apt_timers
+}
+
+test_cmd_install_restores_apt_timers_before_the_verifier() {
+  # bl_unattended enables apt-daily-upgrade.timer without --now on purpose, so
+  # the timer is inactive for the whole run by design. do_check asserts it is
+  # active — run inside the window stop_apt_timers holds open, that assertion
+  # reports a false ✗ on every single install (issue #49). Source-level because
+  # the behavioural install-flow cases need a root host.
+  local src restore_line check_line
+  src=$(declare -f run_install)
+  restore_line=$(grep -n 'restore_apt_timers' <<< "$src" | head -1 | cut -d: -f1)
+  # declare -f renders each statement with a trailing semicolon
+  check_line=$(grep -n '^ *do_check;\?$' <<< "$src" | head -1 | cut -d: -f1)
+  [[ -n $restore_line && -n $check_line ]] || return 1
+  (( restore_line < check_line ))
+}
+
+test_do_check_delegates_the_unattended_assertion() {
+  declare -F do_check_unattended >/dev/null || return 1
+  grep -q 'do_check_unattended' <<< "$(declare -f do_check)"
+}
+
+test_do_check_unattended_names_which_half_failed() {
+  # "not configured or timer inactive" conflated two causes that mean opposite
+  # things: a failed install, versus cleanup that was killed before it ran.
+  local out
+  ok() { printf 'OK %s\n' "$1"; }
+  ko() { printf 'KO %s\n' "$1"; }
+  systemctl() { return 0; }
+
+  rm -f "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG"
+  out=$(do_check_unattended) || return 1
+  grep -q 'KO .*not configured' <<< "$out" || return 1
+
+  printf 'APT::Periodic::Unattended-Upgrade "1";\n' \
+    > "$VPS_BOOT_UNATTENDED_UPGRADES_CONFIG"
+  out=$(do_check_unattended) || return 1
+  grep -q '^OK ' <<< "$out" || return 1
+
+  systemctl() { return 1; }
+  out=$(do_check_unattended) || return 1
+  grep -q 'KO .*timer' <<< "$out" || return 1
+  # a stopped timer must not read as "the install never configured it"
+  ! grep -q 'not configured' <<< "$out"
 }
 
 test_configure_user_mode_skip() {
@@ -422,6 +475,8 @@ test_configure_user_mode_create() {
 }
 
 prepare_stubbed_install_flow() {
+  stop_apt_timers() { :; }
+  restore_apt_timers() { :; }
   banner() { :; }
   section() { :; }
   body() { :; }
@@ -439,6 +494,8 @@ prepare_stubbed_install_flow() {
   bl_user() { printf '%s\n' bl_user >> "$FLOW_TRACE"; }
   bl_ufw() { printf '%s\n' bl_ufw >> "$FLOW_TRACE"; }
   bl_ssh_harden() { printf '%s\n' bl_ssh_harden >> "$FLOW_TRACE"; }
+  probe_step() { return 0; }
+  configure_network() { bl_ufw; bl_ssh_harden; }
   bl_fail2ban() { printf '%s\n' bl_fail2ban >> "$FLOW_TRACE"; }
   stub_component_install() { :; }
 
@@ -486,7 +543,8 @@ test_cmd_install_root_full_install_flow() {
     component_is_applicable "$key" || continue
     [[ ${COMPONENT_DEFAULT[$key]} == 1 ]] && expected+="$key"$'\n'
   done
-  [[ $(cat "$VPS_BOOT_STATE_DIR/components") == "${expected%$'\n'}" ]] || return 1
+  expected=$(resolve_components ${expected})
+  [[ $(cat "$VPS_BOOT_STATE_DIR/components") == "$expected" ]] || return 1
   ! grep -qx sudo_nopasswd "$VPS_BOOT_STATE_DIR/components"
 }
 
@@ -791,7 +849,7 @@ assert_cmd_install_signal_restores_timers() {
   local pid=$!
   # Safety net: if signal delivery does not work in this shell, don't hang
   # the suite — force it down after the stub's own 5s sleep would anyway.
-  ( sleep 6; kill -9 "$pid" 2>/dev/null ) &
+  ( sleep 15; kill -9 "$pid" 2>/dev/null ) &
   local watchdog=$!
 
   local i
@@ -851,7 +909,7 @@ test_cmd_install_restores_apt_timers_on_sighup() {
   restore_apt_timers() { printf 'restore_apt_timers\n' >> "$FLOW_TRACE"; }
   # Blocks at the exact point that bit: the enroll_ssh_key prompt, after
   # every step has already run.
-  enroll_ssh_key() { printf 'waiting\n' >> "$FLOW_TRACE"; sleep 5; }
+  enroll_ssh_key() { printf 'waiting\n' >> "$FLOW_TRACE"; while :; do sleep 0.1; done; }
 
   assert_cmd_install_signal_restores_timers HUP 129
 }
@@ -875,7 +933,7 @@ test_cmd_install_restores_apt_timers_on_sigterm() {
   prompt_multiselect() { return 93; }
   stop_apt_timers() { :; }
   restore_apt_timers() { printf 'restore_apt_timers\n' >> "$FLOW_TRACE"; }
-  enroll_ssh_key() { printf 'waiting\n' >> "$FLOW_TRACE"; sleep 5; }
+  enroll_ssh_key() { printf 'waiting\n' >> "$FLOW_TRACE"; while :; do sleep 0.1; done; }
 
   assert_cmd_install_signal_restores_timers TERM 143
 }
@@ -886,7 +944,7 @@ test_cmd_install_traps_hup_int_term_for_cleanup() {
   # reds/greens reliably regardless of how a given host's bash delivers
   # signals to background jobs.
   local src
-  src=$(declare -f cmd_install)
+  src=$(declare -f run_install)
   grep -qE "trap[^|&]*HUP" <<< "$src" || return 1
   grep -qE "trap[^|&]*INT" <<< "$src" || return 1
   grep -qE "trap[^|&]*TERM" <<< "$src" || return 1
@@ -936,6 +994,7 @@ ui_width_of() {
 }
 
 msel_fixture() {
+  USERNAME=alice
   # Bake the value into the stub rather than reading a local: term_cols is
   # resolved dynamically, so a same-named local inside the script would shadow
   # this one.
@@ -1537,12 +1596,365 @@ test_root_lockdown_is_key_only() {
   ! sshd_root_is_key_only yes
 }
 
-test_install_caddy_never_calls_ufw() {
-  # The firewall is bl_ufw's business; install_caddy must never open a port
-  # itself. Guard the source directly so a future edit that slips in a
-  # `ufw allow` call fails loudly here instead of only in a live check.
-  declare -F install_caddy >/dev/null || return 1
-  ! grep -qi 'ufw' <<< "$(declare -f install_caddy)"
+# ── re-runnable hardening (issue #45) ───────────────────────────────────────
+# The enroll prompt is the longest window in the whole run: it waits on a human
+# right after the SSH port moved. A dropped connection there used to leave the
+# host with password auth open and no supported way back. These cases pin the
+# `harden` subcommand that replaced that dead end.
+
+test_state_config_round_trips_username_and_port() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  [[ -f $VPS_BOOT_STATE_DIR/config ]] || return 1
+  USERNAME=""
+  SSH_PORT=""
+  read_state_config || return 1
+  [[ $STATE_USERNAME == alice ]] || return 1
+  [[ $STATE_SSH_PORT == 2222 ]]
+}
+
+test_write_state_config_cleans_candidate_after_chmod_failure() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  chmod() { return 23; }
+  ! write_state_config || return 1
+  # the previous file survives and no candidate is left behind
+  grep -qx 'USERNAME=alice' "$VPS_BOOT_STATE_DIR/config" || return 1
+  [[ -z $(find "$VPS_BOOT_STATE_DIR" -name '.vps-boot-config.*' 2>/dev/null) ]]
+}
+
+test_read_state_config_tolerates_a_missing_file() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  read_state_config || return 1
+  [[ -z $STATE_USERNAME && -z $STATE_SSH_PORT ]]
+}
+
+test_harden_resolves_the_target_from_recorded_state() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  id() { return 0; }
+  USERNAME=""
+  SSH_PORT=""
+  harden_resolve_target "" || return 1
+  [[ $USERNAME == alice ]] || return 1
+  [[ $SSH_PORT == 2222 ]]
+}
+
+test_harden_username_argument_overrides_recorded_state() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  id() { return 0; }
+  harden_resolve_target bob || return 1
+  [[ $USERNAME == bob ]] || return 1
+  [[ $SSH_PORT == 2222 ]]
+}
+
+test_harden_falls_back_to_the_managed_dropin_port() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  mkdir -p "$(dirname "$VPS_BOOT_SSHD_DROPIN")"
+  write_previous_sshd_dropin || return 1
+  id() { return 0; }
+  # the drop-in answers the question, so sshd must not be consulted at all
+  sshd() { return 1; }
+  harden_resolve_target root || return 1
+  [[ $SSH_PORT == 2200 ]]
+}
+
+test_harden_falls_back_to_the_effective_sshd_port() {
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  rm -f "$VPS_BOOT_SSHD_DROPIN"
+  id() { return 0; }
+  install() { return 0; }
+  sshd() { printf 'port 2244\n'; }
+  harden_resolve_target root || return 1
+  [[ $SSH_PORT == 2244 ]]
+}
+
+test_harden_dies_when_the_port_cannot_be_resolved() {
+  # Guessing here is what a port argument would invite: writing the wrong Port
+  # into the drop-in moves the listener off the port the operator is on.
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  rm -f "$VPS_BOOT_SSHD_DROPIN"
+  id() { return 0; }
+  install() { return 0; }
+  sshd() { return 1; }
+  local out
+  out=$(harden_resolve_target root 2>&1) && return 1
+  grep -q 'SSH port' <<< "$out"
+}
+
+test_hardening_is_applied_reads_the_effective_policy() {
+  sshd() {
+    printf '%s\n' 'passwordauthentication no' 'kbdinteractiveauthentication no' 'permitrootlogin prohibit-password'
+  }
+  USERNAME=root
+  hardening_is_applied || return 1
+  # key-only root is the locked state for a root install, not for a created
+  # user — there, root login must be off outright
+  USERNAME=alice
+  ! hardening_is_applied || return 1
+  sshd() {
+    printf '%s\n' 'passwordauthentication no' 'kbdinteractiveauthentication no' 'permitrootlogin no'
+  }
+  hardening_is_applied || return 1
+  sshd() {
+    printf '%s\n' 'passwordauthentication yes' 'permitrootlogin no'
+  }
+  ! hardening_is_applied
+}
+
+test_harden_command_uses_the_curl_form_when_there_is_no_script_on_disk() {
+  local piped on_disk
+  piped=$(bash -c 'script=$1; source "$script"; USERNAME=alice; harden_command' \
+    bash "$SCRIPT") || return 1
+  grep -q '^curl -fsSL http' <<< "$piped" || return 1
+  grep -q 'bash -s harden alice$' <<< "$piped" || return 1
+  USERNAME=alice
+  on_disk=$(harden_command) || return 1
+  [[ $on_disk == "sudo $0 harden alice" ]]
+}
+
+test_enroll_without_a_key_points_at_the_harden_command() {
+  section() { :; }
+  body() { :; }
+  rail() { :; }
+  prompt_radio() { local outvar=$2; printf -v "$outvar" '%s' ok; }
+  getent() { printf 'alice:x:1000:1000::%s:/bin/bash\n' "$TEST_ROOT/enroll-nokey"; }
+  hostname() { printf '203.0.113.7\n'; }
+  hardening_is_applied() { return 1; }
+  USERNAME=alice
+  SSH_PORT=2222
+  rm -rf "$TEST_ROOT/enroll-nokey"
+  local out
+  out=$(enroll_ssh_key 2>&1) || return 1
+  grep -q 'harden' <<< "$out" || return 1
+  # `check` verifies, it does not harden — pointing there was the dead end
+  ! grep -q ' check ' <<< "$out"
+}
+
+test_enroll_locks_down_when_a_valid_key_exists() {
+  local lockdown_log="$TEST_ROOT/enroll-lockdown"
+  section() { :; }
+  body() { :; }
+  rail() { :; }
+  prompt_radio() { local outvar=$2; printf -v "$outvar" '%s' ok; }
+  getent() { printf 'alice:x:1000:1000::%s:/bin/bash\n' "$TEST_ROOT/enroll-home"; }
+  hostname() { printf '203.0.113.7\n'; }
+  ssh-keygen() { return 0; }
+  chown() { return 0; }
+  chmod() { return 0; }
+  hardening_is_applied() { return 1; }
+  lockdown_ssh() { printf 'locked\n' >> "$lockdown_log"; }
+  USERNAME=alice
+  SSH_PORT=2222
+  rm -f "$lockdown_log"
+  rm -rf "$TEST_ROOT/enroll-home"
+  mkdir -p "$TEST_ROOT/enroll-home/.ssh"
+  printf 'ssh-ed25519 AAAAC3Nza test\n' > "$TEST_ROOT/enroll-home/.ssh/authorized_keys"
+  enroll_ssh_key >/dev/null 2>&1 || return 1
+  [[ $(cat "$lockdown_log") == locked ]]
+}
+
+test_enroll_announces_an_already_hardened_host() {
+  # Standalone re-runs are the normal path now, so the prompt has to say what
+  # state the host is already in rather than implying nothing has happened.
+  local out
+  section() { :; }
+  rail() { :; }
+  body() { printf 'BODY %s\n' "$1"; }
+  prompt_radio() { local outvar=$2; printf -v "$outvar" '%s' skip; }
+  getent() { printf 'alice:x:1000:1000::%s:/bin/bash\n' "$TEST_ROOT/enroll-home"; }
+  hostname() { printf '203.0.113.7\n'; }
+  USERNAME=alice
+  SSH_PORT=2222
+  hardening_is_applied() { return 0; }
+  out=$(enroll_ssh_key 2>&1) || return 1
+  grep -qi 'already' <<< "$out" || return 1
+  hardening_is_applied() { return 1; }
+  out=$(enroll_ssh_key 2>&1) || return 1
+  ! grep -qi 'already' <<< "$out"
+}
+
+test_harden_report_distinguishes_hardened_from_pending() {
+  local out
+  rail() { :; }
+  done_section() { printf 'DONE %s\n' "$1"; }
+  body() { printf 'BODY %s\n' "$1"; }
+  ok() { printf 'OK %s\n' "$1"; }
+  note() { printf 'NOTE %s\n' "$1"; }
+  USERNAME=root
+  SSH_PORT=2222
+  hardening_is_applied() { return 0; }
+  out=$(harden_report) || return 1
+  grep -q 'OK password auth disabled' <<< "$out" || return 1
+  grep -q 'DONE .*keys only' <<< "$out" || return 1
+  hardening_is_applied() { return 1; }
+  out=$(harden_report) || return 1
+  grep -q 'NOTE password auth still enabled' <<< "$out" || return 1
+  grep -q 'BODY .*harden' <<< "$out"
+}
+
+test_cmd_harden_records_state_and_reports_after_enrollment() {
+  # `die` is stubbed so the root precondition does not end the case on a
+  # non-root dev box; its trace line is filtered out so the ordering assertion
+  # reads the same under root, where the stub never fires.
+  local trace="$TEST_ROOT/harden-trace"
+  rm -f "$trace"
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  die() { printf 'die:%s\n' "$1" >> "$trace"; }
+  banner() { printf 'banner\n' >> "$trace"; }
+  enroll_ssh_key() { printf 'enroll\n' >> "$trace"; }
+  harden_report() { printf 'report\n' >> "$trace"; }
+  id() { return 0; }
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  USERNAME=""
+  SSH_PORT=""
+  cmd_harden >/dev/null 2>&1 || return 1
+  [[ $(grep -v '^die:' "$trace") == "banner
+enroll
+report" ]] || return 1
+  grep -qx 'USERNAME=alice' "$VPS_BOOT_STATE_DIR/config" || return 1
+  grep -qx 'SSH_PORT=2222' "$VPS_BOOT_STATE_DIR/config"
+}
+
+test_cmd_check_defaults_to_recorded_state() {
+  # Same `die` stub reasoning as the cmd_harden case above. Checking against a
+  # port the host is not on reports a wall of ✗ that says nothing about it.
+  local checked="$TEST_ROOT/check-target"
+  rm -f "$checked"
+  rm -rf "$VPS_BOOT_STATE_DIR"
+  die() { :; }
+  banner() { :; }
+  id() { return 0; }
+  do_check() { printf '%s:%s\n' "$USERNAME" "$SSH_PORT" >> "$checked"; }
+  USERNAME=alice
+  SSH_PORT=2222
+  write_state_config || return 1
+  USERNAME=""
+  SSH_PORT=""
+  cmd_check >/dev/null 2>&1 || return 1
+  # explicit arguments still win over what was recorded
+  cmd_check bob 2200 >/dev/null 2>&1 || return 1
+  [[ $(cat "$checked") == "alice:2222
+bob:2200" ]]
+}
+
+test_main_routes_the_harden_command() {
+  cmd_harden() { printf 'harden:%s\n' "${1:-}"; }
+  [[ $(main harden alice) == 'harden:alice' ]] || return 1
+  [[ $(main harden) == 'harden:' ]]
+}
+
+test_cmd_install_records_state_before_enrollment() {
+  # The whole point of issue #45: whatever `harden` needs to resolve its target
+  # must be on disk before the run reaches the prompt that can strand it — and
+  # after bl_ssh_harden, which is what makes the recorded port real.
+  local src ssh_line state_line enroll_line
+  src=$(declare -f run_install)
+  ssh_line=$(grep -n 'configure_network' <<< "$src" | head -1 | cut -d: -f1)
+  state_line=$(grep -n 'write_state_config' <<< "$src" | head -1 | cut -d: -f1)
+  enroll_line=$(grep -n 'enroll_ssh_key' <<< "$src" | head -1 | cut -d: -f1)
+  [[ -n $ssh_line && -n $state_line && -n $enroll_line ]] || return 1
+  (( ssh_line < state_line )) || return 1
+  (( state_line < enroll_line ))
+}
+
+test_check_notes_name_the_harden_command() {
+  # A silent warning on an open password-auth box is what left the host
+  # un-hardened with nothing to act on.
+  local src pattern matches
+  src=$(declare -f do_check)
+  pattern='note "(root password login|password auth) still enabled'
+  matches=$(grep -cE "$pattern" <<< "$src")
+  (( matches == 2 )) || return 1
+  matches=$(grep -E "$pattern" <<< "$src" | grep -c 'harden')
+  (( matches == 2 ))
+}
+
+test_check_notes_stay_inside_the_rail() {
+  # The runnable command lives in the footer precisely because harden_command's
+  # curl form is ~110 columns; a status line that wraps loses its rail prefix.
+  local src line
+  src=$(declare -f do_check; declare -f do_check_footer)
+  while IFS= read -r line; do
+    if [[ $line == *harden_command* ]]; then
+      printf 'harden_command inside a status line: %s\n' "$line" >&2
+      return 1
+    fi
+  done < <(grep -E '^ *(ok|ko|note) "' <<< "$src")
+  # ...and the footer does carry it
+  src=$(declare -f do_check_footer)
+  grep -q 'Harden:' <<< "$src" || return 1
+  grep -q 'harden_command' <<< "$src"
+}
+
+test_check_footer_offers_harden_only_when_pending() {
+  local out
+  PASS=0; FAIL=0; WARN=0
+  rail() { :; }
+  done_section() { :; }
+  body() { printf 'BODY %s\n' "$1"; }
+  hostname() { printf '203.0.113.7\n'; }
+  ENABLED_COMPONENTS=()
+  USERNAME=alice
+  SSH_PORT=2222
+  hardening_is_applied() { return 1; }
+  out=$(do_check_footer 2>&1) || return 1
+  grep -q 'BODY .*Harden:' <<< "$out" || return 1
+  grep -q "BODY .*harden alice" <<< "$out" || return 1
+  hardening_is_applied() { return 0; }
+  out=$(do_check_footer 2>&1) || return 1
+  ! grep -q 'Harden:' <<< "$out"
+}
+
+test_help_documents_the_harden_command() {
+  local out
+  out=$(cmd_help)
+  # the usage line, not the "hardening + dev toolchain" tagline
+  grep -qE 'harden +\[username\]' <<< "$out" || return 1
+  grep -qE '^  harden ' <<< "$out" || return 1
+  # harden deliberately takes no port argument
+  ! grep -qE 'harden.*port' <<< "$out"
+}
+
+test_readme_documents_rerunnable_hardening() {
+  local readme="$ROOT_DIR/README.md"
+  grep -qE 'vps-boot\.sh harden' "$readme" || return 1
+  grep -qE 'bash -s harden' "$readme" || return 1
+  grep -q '/etc/vps-boot/config' "$readme" || return 1
+  grep -qiE 'tmux|screen' "$readme"
+}
+
+test_install_port_rejects_22_but_legacy_port_remains_valid() {
+  ! valid_install_port 22 || return 1
+  ! valid_install_port 022 || return 1
+  ! valid_install_port 0 || return 1
+  ! valid_install_port 65536 || return 1
+  valid_install_port 2222 || return 1
+  valid_port 22
+}
+
+test_install_caddy_opens_web_ports() {
+  local calls="$TEST_ROOT/caddy-install-calls"
+  curl() { return 0; }
+  gpg() { return 0; }
+  chmod() { return 0; }
+  wait_for_apt() { return 0; }
+  apt() { printf 'apt %s\n' "$*" >> "$calls"; }
+  ufw() { printf 'ufw %s\n' "$*" >> "$calls"; }
+  install_caddy || return 1
+  local expected=$'apt update -y\napt install -y caddy\nufw allow 80/tcp comment Caddy HTTP\nufw allow 443/tcp comment Caddy HTTPS'
+  [[ $(cat "$calls") == "$expected" ]]
 }
 
 test_check_caddy_reports_version_and_open_ufw_as_ok() {
@@ -1561,16 +1973,15 @@ test_check_caddy_reports_version_and_open_ufw_as_ok() {
   PASS=0; FAIL=0; WARN=0
   check_caddy > "$outfile"
 
-  grep -q 'v2.8.4' "$outfile" || return 1
+  grep -q '2.8.4' "$outfile" || return 1
   (( FAIL == 0 )) || return 1
   (( WARN == 0 )) || return 1
   (( PASS == 2 ))
 }
 
 test_check_caddy_notes_closed_ufw_ports_without_failing() {
-  # A closed firewall on a fresh install is the correct, deliberate state —
-  # not a defect. The check must say so with `note`, and the run must still
-  # exit 0 (only FAIL trips the non-zero exit).
+  # An operator may close the ports after installation. Keep reporting that
+  # recoverable state as a warning with the commands needed to reopen them.
   systemctl() { return 0; }
   caddy() { printf 'v2.8.4 h1:abcdefghi\n'; }
   ufw() { printf 'Status: active\n\n'; }
@@ -1579,7 +1990,7 @@ test_check_caddy_notes_closed_ufw_ports_without_failing() {
   PASS=0; FAIL=0; WARN=0
   check_caddy > "$outfile"
 
-  grep -q 'v2.8.4' "$outfile" || return 1
+  grep -q '2.8.4' "$outfile" || return 1
   grep -q '80' "$outfile" || return 1
   grep -q '443' "$outfile" || return 1
   (( FAIL == 0 )) || return 1
@@ -1655,7 +2066,7 @@ test_check_hermes_reports_a_bare_version() {
   PASS=0; FAIL=0; WARN=0
   local outfile="$TEST_ROOT/check-hermes-output"
   USERNAME=root check_hermes > "$outfile" 2>&1
-  grep -q 'hermes v0.20.2' "$outfile" || return 1
+  grep -q 'hermes 0.20.2' "$outfile" || return 1
   ! grep -q 'Hermes Agent' "$outfile"
 }
 
@@ -1690,7 +2101,7 @@ test_check_tools_reports_a_bare_tree_version() {
   PASS=0; FAIL=0; WARN=0
   local outfile="$TEST_ROOT/check-tools-output"
   check_tools > "$outfile" 2>&1
-  grep -q 'tree v2.1.1' "$outfile" || return 1
+  grep -q 'tree 2.1.1' "$outfile" || return 1
   ! grep -q 'Steve Baker' "$outfile"
 }
 
@@ -1773,7 +2184,7 @@ test_readme_documents_new_defaults() {
   grep -q 'KbdInteractiveAuthentication no' "$ROOT_DIR/README.md" || return 1
   grep -Fq 'check root <port>' "$ROOT_DIR/README.md" || return 1
   grep -Fq 'check <username> <port>' "$ROOT_DIR/README.md" || return 1
-  grep -Eq '(unless|except when).*port 22' "$ROOT_DIR/README.md" || return 1
+  grep -q 'port 22 is rejected' "$ROOT_DIR/README.md" || return 1
 
   # Keep the reload tied to the validated-key enrollment paragraph.
   enrollment_paragraph=$(awk 'BEGIN { RS="" } /authorized_keys/ && /valid SSH key/ { gsub(/\n/, " "); print; exit }' "$ROOT_DIR/README.md")
@@ -1831,7 +2242,7 @@ test_cloud_cli_components_registered() {
 
   # vercel's sign-in hint must avoid the interactive browser callback, which
   # hangs on a headless box.
-  [[ "${COMPONENT_SIGNIN[vercel]:-}" == *'--no-browser'* ]] || return 1
+  [[ "${COMPONENT_SIGNIN[vercel]:-}" == 'vercel login' ]] || return 1
 
   # hostinger's token is account-wide (it can rebuild the VPS); the sign-in
   # hint must say so.
@@ -1841,6 +2252,184 @@ test_cloud_cli_components_registered() {
   # binary.
   declare -f install_hostinger | grep -q 'sha256sum' || return 1
 }
+
+test_dependency_resolution_adds_prerequisites() {
+  [[ $(resolve_components codex python pnpm) == $'node\ncodex\nuv\npython\npnpm' ]] || return 1
+  [[ -z $(resolve_components) ]] || return 1
+  ! resolve_components nonexistent >/dev/null 2>&1 || return 1
+  COMPONENT_DEPS[node]=codex
+  ! resolve_components codex >/dev/null 2>&1
+}
+
+test_journal_retains_verified_steps_and_retries_failures() {
+  mkdir -p "$JOURNAL_DIR"
+  local trace="$TEST_ROOT/journal-executions"
+  installer() { printf 'installed\n' >> "$trace"; }
+  probe_step() { printf 'tool 1.2.3\n'; }
+  record_step tools pending
+  journal_step tools Tools installer >/dev/null || return 1
+  [[ $(step_status tools) == succeeded ]] || return 1
+  journal_step tools Tools installer >/dev/null || return 1
+  [[ $(wc -l < "$trace") == 1 ]] || return 1
+  record_step tools running
+  journal_step tools Tools installer >/dev/null || return 1
+  [[ $(wc -l < "$trace") == 2 ]] || return 1
+  record_step tools pending
+  installer() { return 37; }
+  journal_step tools Tools installer >/dev/null 2>&1
+  local rc=$?
+  [[ $rc == 37 && $(step_status tools) == failed ]]
+}
+
+test_journal_does_not_accept_broken_installation() {
+  mkdir -p "$JOURNAL_DIR"
+  probe_step() { return 1; }
+  installer() { return 0; }
+  record_step tools pending
+  ! journal_step tools Tools installer >/dev/null 2>&1 || return 1
+  [[ $(step_status tools) == failed ]]
+}
+
+test_intent_records_selection_without_password() {
+  rm -rf "$STATE_DIR"
+  local -a enabled=(node codex)
+  USERNAME=alice SSH_PORT=2222 CREATE_USER=1 USER_PASSWORD=not-for-disk
+  initialize_journal || return 1
+  [[ $(cat "$JOURNAL_DIR/schema") == 1 ]] || return 1
+  [[ $(cat "$STATE_FILE") == $'node\ncodex' ]] || return 1
+  ! grep -R 'not-for-disk' "$JOURNAL_DIR" || return 1
+  [[ ! -f "$STATE_CONFIG" ]]
+}
+
+test_resume_uses_recorded_selection_and_no_wizard() {
+  rm -rf "$STATE_DIR"
+  local -a enabled=(node codex)
+  USERNAME=root SSH_PORT=2222 CREATE_USER=0
+  initialize_journal || return 1
+  run_install() { printf '%s:%s:%s:%s\n' "$USERNAME" "$SSH_PORT" "$CREATE_USER" "${enabled[*]}"; }
+  banner() { :; }
+  prompt_password() { return 99; }
+  [[ $(cmd_resume) == 'root:2222:0:node codex' ]]
+}
+
+test_version_failure_is_not_success() {
+  broken() { printf 'broken 1.2.3\n'; return 42; }
+  local PASS=0 FAIL=0
+  report_version broken broken >/dev/null
+  [[ $PASS == 0 && $FAIL == 1 ]] || return 1
+  broken() { printf 'unknown\n'; }
+  report_version broken broken >/dev/null
+  [[ $FAIL == 2 ]]
+}
+
+test_hermes_failure_cleans_temporary_privileges() {
+  mkdir -p "$SUDOERS_DIR"
+  USERNAME=alice
+  sudo() { return 42; }
+  visudo() { return 0; }
+  ( set -e; install_hermes ) >/dev/null 2>&1
+  local rc=$?
+  [[ $rc == 42 ]] || return 1
+  [[ ! -e "$SUDOERS_DIR/99-vps-boot-hermes" ]]
+}
+
+test_hermes_with_controlling_terminal() {
+  local expected=$1 fixture="$TEST_ROOT/hermes-pty.sh" rc=0 command
+  mkdir -p "$SUDOERS_DIR"
+  {
+    printf '#!/usr/bin/env bash\nsource %q\nUSERNAME=root\n' "$SCRIPT"
+    cat <<'FIXTURE'
+hermes_fixture() {
+  cat <<'UPSTREAM'
+set -e
+# Assert terminal isolation before exercising upstream's interactive PATH probe.
+if ( : </dev/tty ) 2>/dev/null; then exit 42; fi
+env -i HOME="$HOME" TERM=dumb bash -i -c 'command -v bash' >/dev/null 2>&1
+UPSTREAM
+  printf 'exit %s\n' "$1"
+}
+FIXTURE
+    # Bake the simulated installer result into the seam, including nonzero status.
+    printf 'hermes_user_script() { hermes_fixture %q; }\ninstall_hermes\n' "$expected"
+  } > "$fixture"
+  printf -v command 'bash %q' "$fixture"
+  timeout 15s script -q -e -c "$command" /dev/null >"$TEST_ROOT/hermes-pty.log" 2>&1 || rc=$?
+  if [[ $rc != "$expected" ]]; then cat "$TEST_ROOT/hermes-pty.log"; return 1; fi
+  [[ ! -e "$SUDOERS_DIR/99-vps-boot-hermes" ]]
+}
+
+test_platform_and_os_release_do_not_conflict() {
+  . /etc/os-release
+  supported_platform ubuntu 26.04 amd64 || return 1
+  ! supported_platform ubuntu 24.04 amd64 || return 1
+  ! supported_platform ubuntu 26.04 arm64 || return 1
+  [[ $(main --version) == 0.1.0 ]]
+}
+
+test_java_excludes_early_access_candidates() {
+  apt-cache() {
+    if [[ $2 == openjdk-25-jdk-headless ]]; then printf 'Candidate: 25.0.4+7\n'
+    else printf 'Candidate: 29~ea+1\n'; fi
+  }
+  apt() { return 0; }
+  [[ $(probe_java_lts_jdk) == openjdk-25-jdk-headless ]]
+}
+
+test_install_lock_excludes_another_process() (
+  acquire_install_lock
+  ! bash -c 'source "$1"; acquire_install_lock' _ "$SCRIPT" >/dev/null 2>&1
+)
+
+test_journal_repairs_a_previously_successful_broken_step() {
+  mkdir -p "$JOURNAL_DIR"
+  local marker="$TEST_ROOT/repaired-step"
+  rm -f "$marker"
+  probe_step() { [[ -f "$marker" ]]; }
+  repair() { touch "$marker"; }
+  record_step tools succeeded
+  journal_step tools Tools repair >/dev/null || return 1
+  [[ -f "$marker" && $(step_status tools) == succeeded ]]
+}
+
+test_legacy_state_is_not_resumable() {
+  rm -rf "$JOURNAL_DIR"
+  USERNAME=root SSH_PORT=2222
+  write_state_config || return 1
+  ! ( cmd_resume ) >/dev/null 2>&1
+}
+
+test_fresh_install_refuses_recorded_state_before_prompts() {
+  USERNAME=root SSH_PORT=2222
+  write_state_config || return 1
+  local output
+  output=$(cmd_install 2>&1) && return 1
+  [[ "$output" == *'already exists'* ]]
+}
+
+test_caddy_and_ssh_do_not_compete_for_web_ports() {
+  ! selection_allows_port 80 caddy || return 1
+  ! selection_allows_port 443 docker caddy || return 1
+  ! selection_allows_port 22 tools || return 1
+  selection_allows_port 2222 caddy || return 1
+  selection_allows_port 80 tools
+}
+
+run_test "Caddy and SSH cannot share web ports" test_caddy_and_ssh_do_not_compete_for_web_ports
+run_test "install lock excludes another process" test_install_lock_excludes_another_process
+run_test "resume repairs a failed verification of a previously successful step" test_journal_repairs_a_previously_successful_broken_step
+run_test "legacy state cannot be resumed" test_legacy_state_is_not_resumable
+run_test "fresh install refuses existing state before prompts" test_fresh_install_refuses_recorded_state_before_prompts
+run_test "platform guard and os-release coexist with script version" test_platform_and_os_release_do_not_conflict
+run_test "Java excludes installable early access candidates" test_java_excludes_early_access_candidates
+run_test "dependencies are resolved, deduplicated and cycles rejected" test_dependency_resolution_adds_prerequisites
+run_test "journal retains verified steps and retries interrupted work" test_journal_retains_verified_steps_and_retries_failures
+run_test "journal rejects an installer whose verification fails" test_journal_does_not_accept_broken_installation
+run_test "intent records selection without password or premature SSH state" test_intent_records_selection_without_password
+run_test "resume uses recorded selection without a new wizard" test_resume_uses_recorded_selection_and_no_wizard
+run_test "failed version command never reports success" test_version_failure_is_not_success
+run_test "Hermes failure removes temporary sudo privileges" test_hermes_failure_cleans_temporary_privileges
+run_test "Hermes completes under a controlling terminal" test_hermes_with_controlling_terminal 0
+run_test "Hermes preserves installer failure under a controlling terminal" test_hermes_with_controlling_terminal 37
 
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
 run_test "stdin execution runs main" test_stdin_execution_runs_main
@@ -1857,10 +2446,13 @@ run_test "wait_for_apt times out and reports" test_wait_for_apt_times_out_and_re
 run_test "wait_for_apt defaults its budget to APT_LOCK_TIMEOUT" test_wait_for_apt_defaults_budget_to_apt_lock_timeout_constant
 run_test "wait_for_apt is a no-op when fuser is unavailable" test_wait_for_apt_is_a_noop_when_fuser_is_unavailable
 run_test "wait_for_apt precedes every apt update/install call" test_wait_for_apt_precedes_every_apt_update_or_install_call
-run_test "stop_apt_timers stops timers and services" test_stop_apt_timers_stops_timers_and_services
-run_test "stop_apt_timers survives missing units" test_stop_apt_timers_survives_missing_units
+run_test "stop_apt_timers leaves in-flight services running" test_stop_apt_timers_stops_timers_and_services
+run_test "stop_apt_timers reports stop failures" test_stop_apt_timers_survives_missing_units
 run_test "restore_apt_timers starts both timers" test_restore_apt_timers_starts_both_timers
-run_test "restore_apt_timers survives missing units" test_restore_apt_timers_survives_missing_units
+run_test "restore_apt_timers reports restart failures" test_restore_apt_timers_survives_missing_units
+run_test "cmd_install restores apt timers before the verifier" test_cmd_install_restores_apt_timers_before_the_verifier
+run_test "do_check delegates the unattended assertion" test_do_check_delegates_the_unattended_assertion
+run_test "unattended check names which half failed" test_do_check_unattended_names_which_half_failed
 run_test "cmd_install stops apt timers before the first apt call" test_cmd_install_stops_apt_timers_before_first_apt_call
 run_test "cmd_install restores apt timers on success" test_cmd_install_restores_apt_timers_on_success
 run_test "cmd_install restores apt timers when a step fails" test_cmd_install_restores_apt_timers_when_a_step_fails
@@ -1896,7 +2488,31 @@ run_test "invalid SSH config is not reloaded" test_invalid_sshd_config_is_not_re
 run_test "SSH lockdown stops after drop-in write failure" test_lockdown_stops_when_dropin_write_fails
 run_test "effective SSH values come from sshd -T" test_sshd_effective_value_reads_sshd_T
 run_test "root lockdown is key-only" test_root_lockdown_is_key_only
-run_test "install_caddy never calls ufw" test_install_caddy_never_calls_ufw
+run_test "state config round-trips username and port" test_state_config_round_trips_username_and_port
+run_test "write_state_config cleans candidate after chmod failure" test_write_state_config_cleans_candidate_after_chmod_failure
+run_test "read_state_config tolerates a missing file" test_read_state_config_tolerates_a_missing_file
+run_test "harden resolves its target from recorded state" test_harden_resolves_the_target_from_recorded_state
+run_test "harden username argument overrides recorded state" test_harden_username_argument_overrides_recorded_state
+run_test "harden falls back to the managed drop-in port" test_harden_falls_back_to_the_managed_dropin_port
+run_test "harden falls back to the effective sshd port" test_harden_falls_back_to_the_effective_sshd_port
+run_test "harden dies when the port cannot be resolved" test_harden_dies_when_the_port_cannot_be_resolved
+run_test "hardening_is_applied reads the effective policy" test_hardening_is_applied_reads_the_effective_policy
+run_test "harden command uses the curl form off disk" test_harden_command_uses_the_curl_form_when_there_is_no_script_on_disk
+run_test "enrollment without a key points at harden" test_enroll_without_a_key_points_at_the_harden_command
+run_test "enrollment locks down when a valid key exists" test_enroll_locks_down_when_a_valid_key_exists
+run_test "enrollment announces an already hardened host" test_enroll_announces_an_already_hardened_host
+run_test "harden report distinguishes hardened from pending" test_harden_report_distinguishes_hardened_from_pending
+run_test "cmd_harden records state and reports after enrollment" test_cmd_harden_records_state_and_reports_after_enrollment
+run_test "cmd_check defaults to recorded state" test_cmd_check_defaults_to_recorded_state
+run_test "main routes the harden command" test_main_routes_the_harden_command
+run_test "cmd_install records state before enrollment" test_cmd_install_records_state_before_enrollment
+run_test "check notes name the harden command" test_check_notes_name_the_harden_command
+run_test "check notes stay inside the rail" test_check_notes_stay_inside_the_rail
+run_test "check footer offers harden only when pending" test_check_footer_offers_harden_only_when_pending
+run_test "help documents the harden command" test_help_documents_the_harden_command
+run_test "README documents re-runnable hardening" test_readme_documents_rerunnable_hardening
+run_test "installation rejects SSH port 22 while legacy state remains readable" test_install_port_rejects_22_but_legacy_port_remains_valid
+run_test "install_caddy opens web ports" test_install_caddy_opens_web_ports
 run_test "check_caddy reports version and open UFW ports as ok" test_check_caddy_reports_version_and_open_ufw_as_ok
 run_test "check_caddy notes closed UFW ports without failing" test_check_caddy_notes_closed_ufw_ports_without_failing
 run_test "check_caddy fails when the service is not active" test_check_caddy_fails_when_service_not_active

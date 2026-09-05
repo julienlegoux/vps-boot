@@ -12,7 +12,9 @@ clone and is kept in sync with the code it describes.
 ## Deliverables
 
 * [Technical Specs](SPECS.md) - final
+* [Release 0.1.0 verification](release-0.1.0.md) - observed tool versions and pending service acceptance
 * [Conventions](CONVENTIONS.md) - final
+* [Drift](DRIFT.md) - 2 entries (epic 1): 1 accepted, 1 resolved
 
 ## Ledger
 

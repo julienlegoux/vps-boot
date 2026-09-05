@@ -1,6 +1,44 @@
 # Log
 
-## 2026-08-16 — change 1, decision 05 reopened
+## 2026-09-05
+
+* **Update**: Refreshed [release verification](release-0.1.0.md) for the
+  develop-to-main release PR: 148 passing tests, successful Woodpecker runs,
+  Hermes terminal regression and corrected Vercel login hint. Full service
+  acceptance remains pending.
+* **Update**: Corrected the [Vercel CLI decision](changes/change-1-expand-toolchain-components/02-vercel-cli.md)
+  to use `vercel login`, removing the invalid flag and unsupported headless-hang claim.
+* **Update**: [Technical Specs](SPECS.md) and [Conventions](CONVENTIONS.md)
+  describe resumable 26.04 amd64 provisioning, dependency resolution, uv Python
+  and Woodpecker CI. [Release verification](release-0.1.0.md) records actual
+  tool installations and the remaining privileged-container acceptance gate.
+* **Update**: [Technical Specs](SPECS.md) now records automatic UFW access
+  to 80/tcp and 443/tcp when Caddy is selected, as requested by the user.
+  The installer, confirmation screen, README and Caddy tests follow this policy.
+* **Update**: New installations reject SSH port 22, including its zero-padded
+  form. Legacy state remains readable by `check` and `harden`.
+
+## 2026-08-17
+
+* **Drift register established** at [DRIFT.md](DRIFT.md), promoted from Epic 1's
+  two drift records at epic close. Both come from issue 09's acceptance runs and
+  have distinct causes, so they stay two entries. (1) *Root-only Full install
+  offers 22 of the 23 registered components* — `component_is_applicable` filters
+  `sudo_nopasswd` out when there is no non-root user to name it in, so the epic's
+  "all 23" criterion is 22 in that mode; **accepted**, with SPECS.md and README.md
+  already restated to give both numbers instead of one that is wrong in one mode.
+  (2) *The documented user-scope idiom starts in a directory the user cannot
+  read* — `sudo -u "$USERNAME" -H bash` sets `HOME` but inherits root's `/root`
+  (mode 700), and the created-user run died at Hermes on uv probing `.`;
+  **resolved (2026-08-17)**, the idiom now carries a mandatory `cd "$HOME"` in
+  both CLAUDE.md and SPECS.md and is asserted by the suite via
+  `hermes_user_script`. Neither disposition leaves open work; both revisit
+  triggers are structural (a second mode-dependent component, a second
+  `user`-scope component).
+
+## 2026-08-16
+
+### Change 1, decision 05 reopened
 
 * **[Decision 05 (Java)](/changes/change-1-expand-toolchain-components/05-java-jdk.md)
   reopened and re-decided** after the epic was written. The accepted verdict —
@@ -19,7 +57,9 @@
   [issue #18](https://github.com/julienlegoux/vps-boot/issues/18);
   `gh_issue`/`milestone` untouched.
 
-## 2026-08-16 — change 1
+## 2026-08-16
+
+### Change 1
 
 * **Change ledger opened**: [change
   1](/changes/change-1-expand-toolchain-components/index.md), brownfield

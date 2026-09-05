@@ -3,10 +3,10 @@ type: Epic
 title: "Expand the toolchain component registry"
 description: "Take vps-boot.sh from twelve components to twenty-three, harden the baseline with build-essential and automatic security updates, and rebuild the component picker so the list still fits a terminal."
 tags: [epic, change]
-timestamp: 2026-08-17T10:00:00Z
+timestamp: 2026-08-17T07:48:15Z
 epic: 1
 slug: expand-toolchain-components
-status: open
+status: done
 gh_issue: 18
 milestone: 1
 resource: https://github.com/julienlegoux/vps-boot/issues/18
@@ -32,7 +32,7 @@ in registration order. Every `check_*` must print a real version string.
 | Key | Install | Notes |
 |---|---|---|
 | `tools` | `apt install jq ripgrep fd-find htop tree` | plus `update-alternatives` exposing `fdfind` as `fd`; registers **before** `hermes` |
-| `vercel` | `npm -g vercel` | hint: `vercel login --no-browser` (bare `vercel login` hangs headless) |
+| `vercel` | `npm -g vercel` | hint: `vercel login` |
 | `hostinger` | GitHub releases tarball → `/usr/local/bin` | resolve latest tag from the API, map `dpkg --print-architecture`, **verify `checksums.sha256`**; mirrors `install_go` |
 | `neon` | `npm -g neonctl` | check probes `neonctl`, not its second binary name `neon` |
 | `pi` | `npm -g @earendil-works/pi-coding-agent` | **not** `pi.dev/install.sh` — that wrapper prompts for a `PATH` edit and would hang `step_run` |

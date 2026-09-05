@@ -1,0 +1,17 @@
+when:
+  - event: [push, pull_request, manual, tag]
+
+steps:
+  - name: ubuntu-26-tests
+    image: ubuntu:26.04
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+      LANG: C.UTF-8
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends bash openssh-server sudo shellcheck procps psmisc util-linux
+      - mkdir -p /run/sshd
+      - bash -n vps-boot.sh
+      - bash -n tests/test_vps_boot.sh
+      - shellcheck --severity=error vps-boot.sh tests/*.sh
+      - bash tests/test_vps_boot.sh
