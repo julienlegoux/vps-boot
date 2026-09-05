@@ -2,6 +2,8 @@
 
 ## 2026-09-05
 
+* **Update**: Corrected the [Vercel CLI decision](changes/change-1-expand-toolchain-components/02-vercel-cli.md)
+  to use `vercel login`, removing the invalid flag and unsupported headless-hang claim.
 * **Update**: [Technical Specs](SPECS.md) and [Conventions](CONVENTIONS.md)
   describe resumable 26.04 amd64 provisioning, dependency resolution, uv Python
   and Woodpecker CI. [Release verification](release-0.1.0.md) records actual

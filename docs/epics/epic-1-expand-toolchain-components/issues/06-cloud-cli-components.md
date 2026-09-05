@@ -31,8 +31,7 @@ Three triples in the Components section, `cloud` group, `COMPONENT_DEFAULT` 1,
 `infra` — and after `node`, which `vercel` and `neon` need.
 
 **`vercel`** — `npm install -g vercel`. Sign-in hint must say
-`vercel login --no-browser`: bare `vercel login` waits on a browser callback and
-hangs on a headless box.
+`vercel login` (corrected on 2026-09-05; the previously specified flag was invalid).
 
 **`neon`** — `npm install -g neonctl`. The package name and the binary name
 differ: `check_neon` probes **`neonctl`**, not the second binary name `neon`.
@@ -89,7 +88,7 @@ are reconciled once, in issue 09 — this PR does not touch that sentence.
 - [ ] `check_neon` probes `neonctl`; `grep -n 'neonctl' vps-boot.sh` shows it in
       both the install and the check.
 - [ ] `vps-boot.sh check` prints a real version for all three, never `?`.
-- [ ] The `vercel` sign-in hint contains `--no-browser`, and the `hostinger` hint
+- [ ] The `vercel` sign-in hint is `vercel login`, and the `hostinger` hint
       states the token is account-wide.
 - [ ] `README.md`'s toolchain rows and `docs/planning/SPECS.md`'s third-party
       source table row updated in the same commit; the roster and count at

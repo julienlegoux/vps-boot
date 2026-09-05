@@ -1431,7 +1431,7 @@ check_vercel() {
 }
 
 register vercel "Vercel CLI" "deploy and manage Vercel projects" 1 system cloud install_vercel check_vercel \
-  "vercel login --no-browser (bare login waits on a browser callback and hangs headless)"
+  "vercel login"
 
 # ─── neon ──────────────────────────────────────────────────
 install_neon() {

@@ -32,7 +32,7 @@ in registration order. Every `check_*` must print a real version string.
 | Key | Install | Notes |
 |---|---|---|
 | `tools` | `apt install jq ripgrep fd-find htop tree` | plus `update-alternatives` exposing `fdfind` as `fd`; registers **before** `hermes` |
-| `vercel` | `npm -g vercel` | hint: `vercel login --no-browser` (bare `vercel login` hangs headless) |
+| `vercel` | `npm -g vercel` | hint: `vercel login` |
 | `hostinger` | GitHub releases tarball → `/usr/local/bin` | resolve latest tag from the API, map `dpkg --print-architecture`, **verify `checksums.sha256`**; mirrors `install_go` |
 | `neon` | `npm -g neonctl` | check probes `neonctl`, not its second binary name `neon` |
 | `pi` | `npm -g @earendil-works/pi-coding-agent` | **not** `pi.dev/install.sh` — that wrapper prompts for a `PATH` edit and would hang `step_run` |

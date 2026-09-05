@@ -2242,7 +2242,7 @@ test_cloud_cli_components_registered() {
 
   # vercel's sign-in hint must avoid the interactive browser callback, which
   # hangs on a headless box.
-  [[ "${COMPONENT_SIGNIN[vercel]:-}" == *'--no-browser'* ]] || return 1
+  [[ "${COMPONENT_SIGNIN[vercel]:-}" == 'vercel login' ]] || return 1
 
   # hostinger's token is account-wide (it can rebuild the VPS); the sign-in
   # hint must say so.

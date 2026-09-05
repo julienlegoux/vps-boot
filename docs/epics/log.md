@@ -1,5 +1,11 @@
 # Log
 
+## 2026-09-05
+
+* **Update**: Corrected the Vercel login hint in [Epic 1](epic-1-expand-toolchain-components/EPIC_1.md)
+  and its cloud CLI issue to `vercel login`. Historical verification captures retain
+  the output produced at the time.
+
 ## 2026-08-17
 
 * **Epic 1 closed**. All nine issues merged into `develop` and closed —
