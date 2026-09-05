@@ -15,6 +15,13 @@ change: 1
 change_slug: expand-toolchain-components
 ---
 
+> Historical decision, superseded by release 0.1.0. The conclusion that Node
+> compatibility failure was unreachable assumed Node remained selected; Custom
+> did not enforce that dependency. The current registry resolves prerequisites
+> explicitly and npm enforces engine constraints. Python now uses stable uv
+> distributions rather than deadsnakes. See [current specs](/SPECS.md).
+
+
 # Question
 
 Raised by the user after the Java correction: if the first recommendation

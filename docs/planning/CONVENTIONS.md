@@ -117,8 +117,7 @@ Conventions the harness assumes:
 - Behaviour promised in `README.md` is asserted against the README text
   (`test_readme_documents_new_defaults`), so user-facing changes update both.
 
-There is no CI. Run `bash tests/test_vps_boot.sh` before pushing; the harness exits
-non-zero when any case fails.
+Woodpecker runs `.woodpecker/test.yaml` on Ubuntu 26.04. Run `bash tests/test_vps_boot.sh` as root in the disposable Linux test container before pushing; the harness exits non-zero when any case fails. Real network/service acceptance is a separate privileged-container scenario.
 
 ## Error handling
 
@@ -169,8 +168,7 @@ so a merge to either ships immediately.
 `Merge pull request #N from …` for the GitHub PR flow and hand-written subjects for
 direct integration merges (`Merge reliable bootstrap fixes into develop`).
 
-Release markers are commits subjected `v0.0.1` / `v0.0.2` / `v0.0.3`. There are no
-git tags.
+Release markers are commits subjected `v0.0.1` / `v0.0.2` / `v0.0.3`. Release 0.1.0 introduces explicit script versioning; tag publication waits for acceptance validation.
 
 ## Review
 
@@ -191,3 +189,19 @@ regenerated. Keep it in sync in the same commit as the code it describes.
 ([decision](/mapping/03-agents-md-vs-claude-md.md)); the duplicate `AGENTS.md` was
 deleted during this mapping. Changes to the component contract or the conventions
 above update `.claude/CLAUDE.md` in the same commit.
+
+## Release 0.1.0 refinements
+
+`resume` uses an atomic, versioned journal; old state cannot be assumed complete.
+New installs refuse existing state. Preserve the running SSH policy on retries.
+Component dependencies are explicit and resolved before confirmation. Keep the
+register display order independent from prerequisite execution order.
+
+Use `report_version` or `version_value` for runtime probes. Capture command exit
+status before parsing output and never report an unknown version as success.
+Use per-user writable Cargo caches with the shared root-managed toolchain.
+All shell scripts and YAML use LF on every checkout platform.
+
+Do not kill apt services to acquire locks. Stop their timers, wait for active
+transactions, and restore timers through the install cleanup path. Caddy opens
+80/tcp and 443/tcp when selected; its description and confirmation must say so.

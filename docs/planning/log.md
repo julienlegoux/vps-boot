@@ -1,5 +1,17 @@
 # Log
 
+## 2026-09-05
+
+* **Update**: [Technical Specs](SPECS.md) and [Conventions](CONVENTIONS.md)
+  describe resumable 26.04 amd64 provisioning, dependency resolution, uv Python
+  and Woodpecker CI. [Release verification](release-0.1.0.md) records actual
+  tool installations and the remaining privileged-container acceptance gate.
+* **Update**: [Technical Specs](SPECS.md) now records automatic UFW access
+  to 80/tcp and 443/tcp when Caddy is selected, as requested by the user.
+  The installer, confirmation screen, README and Caddy tests follow this policy.
+* **Update**: New installations reject SSH port 22, including its zero-padded
+  form. Legacy state remains readable by `check` and `harden`.
+
 ## 2026-08-17
 
 * **Drift register established** at [DRIFT.md](DRIFT.md), promoted from Epic 1's
@@ -18,7 +30,9 @@
   triggers are structural (a second mode-dependent component, a second
   `user`-scope component).
 
-## 2026-08-16 — change 1, decision 05 reopened
+## 2026-08-16
+
+### Change 1, decision 05 reopened
 
 * **[Decision 05 (Java)](/changes/change-1-expand-toolchain-components/05-java-jdk.md)
   reopened and re-decided** after the epic was written. The accepted verdict —
@@ -37,7 +51,9 @@
   [issue #18](https://github.com/julienlegoux/vps-boot/issues/18);
   `gh_issue`/`milestone` untouched.
 
-## 2026-08-16 — change 1
+## 2026-08-16
+
+### Change 1
 
 * **Change ledger opened**: [change
   1](/changes/change-1-expand-toolchain-components/index.md), brownfield

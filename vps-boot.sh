@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vps-boot.sh — single-shot Ubuntu LTS hardening + dev toolchain
+# vps-boot.sh — resumable Ubuntu 26.04 amd64 hardening + dev toolchain
 # Usage: sudo ./vps-boot.sh install [username] [port]
 #        sudo ./vps-boot.sh harden  [username]
 #        sudo ./vps-boot.sh check   [username] [port]
@@ -15,21 +15,25 @@ set -euo pipefail
 # ════════════════════════════════════════════════════════════════════════════
 
 readonly PORT_MIN=10000
+readonly VPS_BOOT_VERSION=0.1.0
 readonly PORT_MAX=65535
-readonly LOG_FILE="${VPS_BOOT_LOG_FILE:-/tmp/vps-boot.log}"
+readonly LOG_FILE="${VPS_BOOT_LOG_FILE:-/var/log/vps-boot.log}"
 readonly APT_LOCK_TIMEOUT=180
 readonly APT_LOCK_CONFIG="${VPS_BOOT_APT_LOCK_CONFIG:-/etc/apt/apt.conf.d/99-vps-boot-lock-timeout}"
-readonly UNATTENDED_UPGRADES_CONFIG="${VPS_BOOT_UNATTENDED_UPGRADES_CONFIG:-/etc/apt/apt.conf.d/20auto-upgrades}"
+readonly UNATTENDED_UPGRADES_CONFIG="${VPS_BOOT_UNATTENDED_UPGRADES_CONFIG:-/etc/apt/apt.conf.d/99vps-boot-unattended}"
 readonly SUDOERS_DIR="${VPS_BOOT_SUDOERS_DIR:-/etc/sudoers.d}"
 readonly SSHD_CONFIG="${VPS_BOOT_SSHD_CONFIG:-/etc/ssh/sshd_config}"
 readonly SSHD_DROPIN="${VPS_BOOT_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-vps-boot.conf}"
 readonly STATE_DIR="${VPS_BOOT_STATE_DIR:-/etc/vps-boot}"
 readonly STATE_FILE="$STATE_DIR/components"
 readonly STATE_CONFIG="$STATE_DIR/config"
+readonly JOURNAL_DIR="$STATE_DIR/journal"
+readonly PYTHON_HOME="${VPS_BOOT_PYTHON_HOME:-/opt/vps-boot/python}"
+readonly PYTHON_BIN="${VPS_BOOT_PYTHON_BIN:-/usr/local/bin/python}"
 # The canonical remote invocation. Shared by --help and by the hint `harden`
 # prints when there is no script on disk to re-run — under `curl | sudo bash`
 # $0 is "bash", so telling the operator to run "$0 harden" is useless.
-readonly REMOTE_URL="https://raw.githubusercontent.com/julienlegoux/vps-boot/main/vps-boot.sh"
+readonly REMOTE_URL="https://raw.githubusercontent.com/julienlegoux/vps-boot/develop/vps-boot.sh"
 # rustup is installed system-wide rather than under $HOME. Both install_rust
 # and check_rust read these, so the two cannot point at different trees.
 readonly RUSTUP_HOME_DIR="${VPS_BOOT_RUSTUP_HOME:-/usr/local/rustup}"
@@ -724,6 +728,29 @@ declare -A COMPONENT_GROUP=()   # one of COMPONENT_GROUPS
 declare -A COMPONENT_INSTALL=()
 declare -A COMPONENT_CHECK=()
 declare -A COMPONENT_SIGNIN=()  # optional: short hint shown in do_check footer
+declare -A COMPONENT_DEPS=([python]=uv [bun]=node [pnpm]=node [claude]=node
+  [opencode]=node [codex]=node [gemini]=node [pi]=node [vercel]=node [neon]=node)
+
+# Topological order, with registry order used to break ties. The selected set
+# and dependency state are local to each resolution (including recursive calls).
+resolve_components() {
+  local -A visiting=() resolved=()
+  local key
+  for key in "$@"; do resolve_component "$key" || return; done
+}
+
+resolve_component() {
+  local key=$1 dependency
+  [[ "$key" =~ ^[a-z_][a-z0-9_]*$ ]] || return 1
+  [[ -n ${COMPONENT_INSTALL[$key]:-} && ( ${COMPONENT_SCOPE[$key]:-} == system || ${COMPONENT_SCOPE[$key]:-} == user ) ]] || { printf 'Unknown component: %s\n' "$key" >&2; return 1; }
+  [[ ${resolved[$key]:-0} == 1 ]] && return 0
+  [[ ${visiting[$key]:-0} == 0 ]] || { printf 'Dependency cycle: %s\n' "$key" >&2; return 1; }
+  visiting[$key]=1
+  for dependency in ${COMPONENT_DEPS[$key]:-}; do resolve_component "$dependency" || return; done
+  visiting[$key]=0
+  resolved[$key]=1
+  printf '%s\n' "$key"
+}
 
 # register <key> <name> <desc> <default 0|1> <scope system|user> <group> <install_fn> <check_fn> [signin_hint]
 # group is required and must be one of COMPONENT_GROUPS.
@@ -878,7 +905,7 @@ selection_summary() {
   local room=$(( budget - ${#pre} - 5 - ${#verb} - 2 ))
   (( room < 10 )) && room=10
 
-  local names="" len=0 shown=0 count=${#listed[@]}
+  local display_names="" len=0 shown=0 count=${#listed[@]}
   local i name add remaining reserve left
 
   # If the whole list fits, print it — no "+N more" that is longer than the
@@ -891,10 +918,10 @@ selection_summary() {
   done
   if (( all_len <= room )); then
     for ((i=0; i<count; i++)); do
-      (( i > 0 )) && names+=" · "
-      names+="${COMPONENT_NAME[${listed[i]}]:-${listed[i]}}"
+      (( i > 0 )) && display_names+=" · "
+      display_names+="${COMPONENT_NAME[${listed[i]}]:-${listed[i]}}"
     done
-    printf '%s  ·  %s: %s' "$pre" "$verb" "$names"
+    printf '%s  ·  %s: %s' "$pre" "$verb" "$display_names"
     return 0
   fi
 
@@ -909,18 +936,18 @@ selection_summary() {
       reserve=$(( 3 + 1 + ${#remaining} + 5 ))
     fi
     if (( len + add + reserve > room )); then break; fi
-    (( shown > 0 )) && names+=" · "
-    names+="$name"
+    (( shown > 0 )) && display_names+=" · "
+    display_names+="$name"
     len=$(( len + add ))
     shown=$(( shown + 1 ))
   done
   left=$(( count - shown ))
   if (( left > 0 )); then
-    (( shown > 0 )) && names+=" · "
-    names+="+$left more"
+    (( shown > 0 )) && display_names+=" · "
+    display_names+="+$left more"
   fi
 
-  printf '%s  ·  %s: %s' "$pre" "$verb" "$names"
+  printf '%s  ·  %s: %s' "$pre" "$verb" "$display_names"
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -976,69 +1003,25 @@ install_tools() {
   update-alternatives --install /usr/local/bin/fd fd /usr/bin/fdfind 1
 }
 
+# Read the complete output before parsing: a successful producer must not
+# become SIGPIPE merely because its version includes several lines.
+version_value() {
+  local output
+  output=$("$@" 2>&1) || return 1
+  [[ "$output" =~ ([0-9]+\.[0-9]+([.][0-9]+)?([-+][[:alnum:].-]+)?) ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+report_version() {
+  local label=$1 value
+  shift
+  if value=$(version_value "$@"); then ok "$label $value"
+  else ko "$label unavailable or version command failed"; fi
+}
+
 check_tools() {
-  local failures=0
-  local versions=()
-
-  # Check jq
-  if command -v jq >/dev/null 2>&1; then
-    local v
-    v=$(jq --version 2>/dev/null | head -1 || echo "?")
-    versions+=("jq $v")
-  else
-    versions+=("jq ✗")
-    ((failures++))
-  fi
-
-  # Check ripgrep (rg)
-  if command -v rg >/dev/null 2>&1; then
-    local v
-    v=$(rg --version 2>/dev/null | head -1 | awk '{print $2}' || echo "?")
-    versions+=("rg $v")
-  else
-    versions+=("rg ✗")
-    ((failures++))
-  fi
-
-  # Check fd (via the update-alternatives link)
-  if command -v fd >/dev/null 2>&1; then
-    local v
-    v=$(fd --version 2>/dev/null | head -1 || echo "?")
-    versions+=("fd $v")
-  else
-    versions+=("fd ✗")
-    ((failures++))
-  fi
-
-  # Check htop
-  if command -v htop >/dev/null 2>&1; then
-    local v
-    v=$(htop --version 2>/dev/null | head -1 || echo "?")
-    versions+=("htop $v")
-  else
-    versions+=("htop ✗")
-    ((failures++))
-  fi
-
-  # Check tree
-  if command -v tree >/dev/null 2>&1; then
-    local v
-    # "tree v2.1.1 © 1996 - 2023 by Steve Baker, …" — the whole copyright
-    # notice follows the version, and joined with four other tools it runs off
-    # the rail. Keep the first two fields.
-    v=$(tree --version 2>/dev/null | head -1 | awk '{print $2}')
-    [[ -n "$v" ]] || v="?"
-    versions+=("tree $v")
-  else
-    versions+=("tree ✗")
-    ((failures++))
-  fi
-
-  if (( failures == 0 )); then
-    ok "tools: ${versions[*]}"
-  else
-    ko "tools: ${versions[*]}"
-  fi
+  local tool
+  for tool in jq rg fd htop tree; do report_version "$tool" "$tool" --version; done
 }
 
 register tools "CLI tools" "jq, ripgrep, fd, htop, tree" 1 system core \
@@ -1065,21 +1048,14 @@ install_docker() {
 }
 
 check_docker() {
-  if systemctl is-active --quiet docker; then
-    local v
-    v=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',' || echo "?")
-    local cv
-    cv=$(docker compose version --short 2>/dev/null || echo "?")
-    ok "docker $v · compose v$cv"
-  else
-    ko "docker daemon not running"
-  fi
-  if [[ "$USERNAME" != "root" ]]; then
-    if id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-      ok "$USERNAME in docker group"
-    else
-      ko "$USERNAME not in docker group"
-    fi
+  if systemctl is-active --quiet docker; then ok "docker daemon active"
+  else ko "docker daemon not running"; fi
+  report_version docker docker --version
+  report_version compose docker compose version --short
+  report_version buildx docker buildx version
+  if [[ "$USERNAME" != root ]]; then
+    if id -nG "$USERNAME" | tr ' ' '\n' | grep -qx docker; then ok "$USERNAME in docker group"
+    else ko "$USERNAME not in docker group"; fi
   fi
 }
 
@@ -1101,13 +1077,7 @@ install_gh() {
 }
 
 check_gh() {
-  if command -v gh >/dev/null 2>&1; then
-    local v
-    v=$(gh --version 2>/dev/null | head -1 | awk '{print $3}' || echo "?")
-    ok "gh $v"
-  else
-    ko "gh not installed"
-  fi
+  report_version "gh" gh --version
 }
 
 register gh "GitHub CLI" "gh" 1 system core install_gh check_gh \
@@ -1123,98 +1093,79 @@ install_node() {
 }
 
 check_node() {
-  if command -v node >/dev/null 2>&1; then
-    local v
-    v=$(node --version 2>/dev/null || echo "?")
-    ok "node $v"
-  else
-    ko "node not installed"
-  fi
+  report_version "node" node --version
+  report_version "npm" npm --version
 }
 
 register node "Node LTS" "current LTS via NodeSource" 1 system languages install_node check_node
 
 # ─── python ────────────────────────────────────────────────
 install_python() {
-  add-apt-repository -y ppa:deadsnakes/ppa
-  wait_for_apt
-  apt update -y
-
-  # Pick the newest python3.X that actually has an installable candidate.
-  # Deadsnakes lists pre-release names (e.g. 3.15) before the binary is shipped
-  # for the current Ubuntu release, so we have to probe with --dry-run.
-  local pyver="" v
-  for v in $(apt-cache search '^python3\.[0-9]+$' \
-              | grep -oP 'python3\.\d+' \
-              | sort -t. -k2 -n -r); do
-    wait_for_apt
-    if apt install -y --dry-run "$v" "${v}-venv" >/dev/null 2>&1; then
-      pyver="$v"
-      break
-    fi
-  done
-  [ -n "$pyver" ] || { echo "no installable Python found in deadsnakes PPA" >&2; return 1; }
-
-  # distutils was removed from stdlib in 3.12 and deadsnakes no longer ships
-  # python3.X-distutils for newer versions, so we don't install it.
-  wait_for_apt
-  apt install -y "$pyver" "${pyver}-venv"
-
-  # Bootstrap pip for the new interpreter via ensurepip (ships with python3.X-venv).
-  # python3-pip would only wire pip to the system Python, not our $pyver.
-  "/usr/bin/$pyver" -m ensurepip --upgrade --default-pip
-
-  # Do NOT repoint /usr/bin/python3 — distro packages (fail2ban, apt itself,
-  # etc.) are built against the system Python and break under a newer
-  # interpreter (e.g. sre_constants was removed in 3.13). Only expose the
-  # new interpreter as `python` for interactive use.
-  update-alternatives --install /usr/bin/python python "/usr/bin/$pyver" 1
+  install -d -m 0755 "$PYTHON_HOME"
+  local py py_version environment
+  UV_PYTHON_INSTALL_DIR="$PYTHON_HOME" uv --no-config python install 3
+  py=$(UV_PYTHON_INSTALL_DIR="$PYTHON_HOME" uv --no-config python find --managed-python 3)
+  "$py" -c 'import sys; assert sys.version_info.releaselevel == "final"'
+  py_version=$("$py" -c 'import platform; print(platform.python_version())')
+  environment="$PYTHON_HOME/venvs/$py_version"
+  # uv-managed interpreters are externally managed. Seed pip in a separate
+  # development venv instead of modifying the managed interpreter itself.
+  if ! "$environment/bin/python" -m pip --version >/dev/null 2>&1; then
+    uv --no-config venv --seed --allow-existing --python "$py" "$environment"
+  fi
+  "$environment/bin/python" -m pip --version
+  chmod -R a+rX "$PYTHON_HOME"
+  # Only expose python, never shadow Ubuntu's python3 (including via PATH).
+  # A symlink outside the venv can resolve through uv's interpreter symlink
+  # and lose pyvenv.cfg discovery. Exec its original path instead.
+  printf '#!/bin/sh\nexec "%s/bin/python" "$@"\n' "$environment" > "${PYTHON_BIN}.new"
+  chmod 0755 "${PYTHON_BIN}.new"
+  mv -Tf "${PYTHON_BIN}.new" "$PYTHON_BIN"
 }
 
 check_python() {
-  # Report the `python` alternative (deadsnakes interpreter) rather than
-  # `python3` (system Python), since the install step deliberately leaves
-  # /usr/bin/python3 alone to avoid breaking distro services.
-  if command -v python >/dev/null 2>&1; then
-    local v
-    v=$(python --version 2>/dev/null | awk '{print $2}' || echo "?")
-    ok "python $v"
+  if ! "$PYTHON_BIN" -c 'import sys; assert sys.version_info.releaselevel == "final"' 2>/dev/null; then
+    ko "python missing or not a stable release"
   else
-    ko "python not installed"
+    report_version python "$PYTHON_BIN" --version
   fi
-  local py_bin
-  py_bin=$(command -v python || true)
-  if [ -n "$py_bin" ] && "$py_bin" -m pip --version >/dev/null 2>&1; then
-    local pv
-    pv=$("$py_bin" -m pip --version 2>/dev/null | awk '{print $2}' || echo "?")
-    ok "pip $pv"
-  else
-    ko "pip not installed"
-  fi
+  report_version pip "$PYTHON_BIN" -m pip --version
 }
 
-register python "Python + pip" "latest Python 3 via deadsnakes PPA" 1 system languages install_python check_python
+register python "Python + pip" "stable Python 3 via uv" 1 system languages install_python check_python
 
 # ─── go ────────────────────────────────────────────────────
-install_go() {
-  local ver arch
-  ver=$(curl -fsSL "https://go.dev/VERSION?m=text" | head -1)
-  arch=$(dpkg --print-architecture)
-  rm -rf /usr/local/go
-  curl -fsSL "https://go.dev/dl/${ver}.linux-${arch}.tar.gz" \
-    | tar -C /usr/local -xz
+install_go() (
+  set -euo pipefail
+  local ver archive checksum tmp_dir previous
+  ver=$(curl -fsSL "https://go.dev/VERSION?m=text" | sed -n '1p')
+  [[ "$ver" =~ ^go[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || return 1
+  archive="${ver}.linux-amd64.tar.gz"
+  tmp_dir=$(mktemp -d /usr/local/.go-download.XXXXXX)
+  trap 'rm -rf -- "$tmp_dir"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  checksum=$(curl -fsSL 'https://go.dev/dl/?mode=json' | python3 -c 'import json,sys; print(next(f["sha256"] for r in json.load(sys.stdin) for f in r["files"] if f["filename"] == sys.argv[1]))' "$archive")
+  [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || return 1
+  curl -fsSL "https://go.dev/dl/$archive" -o "$tmp_dir/$archive"
+  printf '%s  %s\n' "$checksum" "$tmp_dir/$archive" | sha256sum -c -
+  tar -C "$tmp_dir" -xzf "$tmp_dir/$archive"
+  "$tmp_dir/go/bin/go" version
+  previous=/usr/local/go.previous
+  [[ ! -e "$previous" ]] || { echo "Previous Go backup requires inspection" >&2; return 1; }
+  if [[ -e /usr/local/go ]]; then mv /usr/local/go "$previous"; fi
+  if ! mv "$tmp_dir/go" /usr/local/go; then
+    [[ ! -e "$previous" ]] || mv "$previous" /usr/local/go
+    return 1
+  fi
+  rm -rf "$previous"
   printf 'export PATH=$PATH:/usr/local/go/bin\n' > /etc/profile.d/go.sh
   chmod 644 /etc/profile.d/go.sh
-}
+)
 
 check_go() {
-  if [ -x /usr/local/go/bin/go ]; then
-    local v
-    v=$(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}' || echo "?")
-    ok "go $v"
-  else
-    ko "go not installed"
-  fi
+  report_version "go" /usr/local/go/bin/go version
 }
 
 register go "Go" "latest Go via go.dev" 1 system languages install_go check_go
@@ -1234,9 +1185,12 @@ register go "Go" "latest Go via go.dev" 1 system languages install_go check_go
 # reason: "default", "newest" and "newest LTS" are three different versions
 # for Java, unlike go/python where they collapse into one.
 probe_java_lts_jdk() {
-  local n
+  local n candidate
   for (( n = 40; n >= 17; n-- )); do
     (( (n - 21) % 4 == 0 )) || continue
+    candidate=$(apt-cache policy "openjdk-${n}-jdk-headless" | awk '/Candidate:/ {print $2}')
+    [[ -n "$candidate" && "$candidate" != '(none)' ]] || continue
+    [[ ! "$candidate" =~ (ea|alpha|beta|rc) ]] || continue
     wait_for_apt
     apt install -y --dry-run "openjdk-${n}-jdk-headless" >/dev/null 2>&1 || continue
     printf 'openjdk-%s-jdk-headless\n' "$n"
@@ -1263,20 +1217,10 @@ install_java() {
 }
 
 check_java() {
-  # A JRE-only box would pass a naive `command -v java`; assert javac too.
-  if command -v java >/dev/null 2>&1 && command -v javac >/dev/null 2>&1; then
-    local v
-    # java -version writes its output to stderr, not stdout, as
-    # `openjdk version "25.0.3" 2026-04-21`. Split on the quotes and take the
-    # second field: a `grep -o` lookbehind matches twice (once after the
-    # opening quote, once after the closing one) and puts the build date on a
-    # second, rail-less line.
-    v=$(java -version 2>&1 | head -1 | awk -F'"' '{print $2}')
-    [[ -n "$v" ]] || v="?"
-    ok "java $v"
-  else
-    ko "java/javac not installed"
-  fi
+  local jv cv
+  if jv=$(version_value java -version) && cv=$(version_value javac -version); then
+    ok "java $jv (javac $cv)"
+  else ko "java/javac unavailable or version command failed"; fi
 }
 
 register java "Java (JDK)" "newest installable LTS OpenJDK" 1 system languages install_java check_java
@@ -1291,11 +1235,11 @@ install_rust() {
   # root and any created user alike.
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" \
-      sh -s -- -y --no-modify-path
+      sh -s -- -y --no-modify-path --default-toolchain stable
 
   cat > /etc/profile.d/rust.sh <<PROFILE
 export RUSTUP_HOME=$RUSTUP_HOME_DIR
-export CARGO_HOME=$CARGO_HOME_DIR
+export CARGO_HOME=\$HOME/.cargo
 export PATH=\$PATH:$CARGO_HOME_DIR/bin
 PROFILE
   chmod 644 /etc/profile.d/rust.sh
@@ -1314,10 +1258,8 @@ check_rust() {
   # even though the toolchain is installed. Exporting it is the difference
   # between a real version and the "?" that used to be reported as a pass.
   local rv cv
-  rv=$(RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" \
-    "$CARGO_HOME_DIR/bin/rustc" --version 2>/dev/null | awk '{print $2}')
-  cv=$(RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" \
-    "$CARGO_HOME_DIR/bin/cargo" --version 2>/dev/null | awk '{print $2}')
+  rv=$(RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" version_value "$CARGO_HOME_DIR/bin/rustc" --version) || rv=""
+  cv=$(RUSTUP_HOME="$RUSTUP_HOME_DIR" CARGO_HOME="$CARGO_HOME_DIR" version_value "$CARGO_HOME_DIR/bin/cargo" --version) || cv=""
   # A shim that cannot name a version is a broken toolchain, not a pass.
   if [[ -z "$rv" || -z "$cv" ]]; then
     ko "rust installed but no default toolchain — run 'rustup default stable'"
@@ -1332,34 +1274,22 @@ register rust "Rust" "rustup toolchain (rustc, cargo)" 1 system languages instal
 
 # ─── bun ───────────────────────────────────────────────────
 install_bun() {
-  npm install -g bun
+  npm install --engine-strict -g bun
 }
 
 check_bun() {
-  if command -v bun >/dev/null 2>&1; then
-    local v
-    v=$(bun --version 2>/dev/null || echo "?")
-    ok "bun $v"
-  else
-    ko "bun not installed"
-  fi
+  report_version "bun" bun --version
 }
 
 register bun "Bun" "JS runtime" 1 system packaging install_bun check_bun
 
 # ─── pnpm ──────────────────────────────────────────────────
 install_pnpm() {
-  npm install -g pnpm
+  npm install --engine-strict -g pnpm
 }
 
 check_pnpm() {
-  if command -v pnpm >/dev/null 2>&1; then
-    local v
-    v=$(pnpm --version 2>/dev/null || echo "?")
-    ok "pnpm $v"
-  else
-    ko "pnpm not installed"
-  fi
+  report_version "pnpm" pnpm --version
 }
 
 register pnpm "pnpm" "fast npm-compatible package manager" 1 system packaging install_pnpm check_pnpm
@@ -1373,13 +1303,7 @@ install_uv() {
 }
 
 check_uv() {
-  if command -v uv >/dev/null 2>&1; then
-    local v
-    v=$(uv --version 2>/dev/null | awk '{print $2}' || echo "?")
-    ok "uv $v"
-  else
-    ko "uv not installed"
-  fi
+  report_version "uv" uv --version
 }
 
 register uv "uv" "fast Python package/venv manager" 1 system packaging install_uv check_uv
@@ -1388,19 +1312,11 @@ register uv "uv" "fast Python package/venv manager" 1 system packaging install_u
 
 # ─── claude code ───────────────────────────────────────────
 install_claude() {
-  npm install -g @anthropic-ai/claude-code
+  npm install --engine-strict -g @anthropic-ai/claude-code
 }
 
 check_claude() {
-  if command -v claude >/dev/null 2>&1; then
-    local v
-    # "2.1.233 (Claude Code)" — the version is the first field; $NF is "Code)".
-    v=$(claude --version 2>/dev/null | head -1 | awk '{print $1}')
-    [[ -n "$v" ]] || v="?"
-    ok "claude $v"
-  else
-    ko "claude code not installed"
-  fi
+  report_version "claude" claude --version
 }
 
 register claude "Claude Code" "Anthropic's CLI" 1 system agents install_claude check_claude \
@@ -1408,17 +1324,11 @@ register claude "Claude Code" "Anthropic's CLI" 1 system agents install_claude c
 
 # ─── opencode ──────────────────────────────────────────────
 install_opencode() {
-  npm install -g opencode-ai
+  npm install --engine-strict -g opencode-ai
 }
 
 check_opencode() {
-  if command -v opencode >/dev/null 2>&1; then
-    local v
-    v=$(opencode --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
-    ok "opencode $v"
-  else
-    ko "opencode not installed"
-  fi
+  report_version "opencode" opencode --version
 }
 
 register opencode "opencode" "open-source AI coding agent" 1 system agents install_opencode check_opencode \
@@ -1426,17 +1336,11 @@ register opencode "opencode" "open-source AI coding agent" 1 system agents insta
 
 # ─── codex ─────────────────────────────────────────────────
 install_codex() {
-  npm install -g @openai/codex
+  npm install --engine-strict -g @openai/codex
 }
 
 check_codex() {
-  if command -v codex >/dev/null 2>&1; then
-    local v
-    v=$(codex --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
-    ok "codex $v"
-  else
-    ko "codex not installed"
-  fi
+  report_version "codex" codex --version
 }
 
 register codex "Codex" "OpenAI's CLI coding agent" 1 system agents install_codex check_codex \
@@ -1444,17 +1348,11 @@ register codex "Codex" "OpenAI's CLI coding agent" 1 system agents install_codex
 
 # ─── gemini ────────────────────────────────────────────────
 install_gemini() {
-  npm install -g @google/gemini-cli
+  npm install --engine-strict -g @google/gemini-cli
 }
 
 check_gemini() {
-  if command -v gemini >/dev/null 2>&1; then
-    local v
-    v=$(gemini --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
-    ok "gemini $v"
-  else
-    ko "gemini not installed"
-  fi
+  report_version "gemini" gemini --version
 }
 
 register gemini "Gemini CLI" "Google's CLI coding agent" 1 system agents install_gemini check_gemini \
@@ -1466,17 +1364,11 @@ install_pi() {
   # install-script domain) prompts interactively to edit PATH; a prompt
   # inside step_run hangs the run silently, since stdout is redirected to
   # the log. Install the npm package instead — same binary, no prompt.
-  npm install -g @earendil-works/pi-coding-agent
+  npm install --engine-strict -g @earendil-works/pi-coding-agent
 }
 
 check_pi() {
-  if command -v pi >/dev/null 2>&1; then
-    local v
-    v=$(pi --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
-    ok "pi $v"
-  else
-    ko "pi not installed"
-  fi
+  report_version "pi" pi --version
 }
 
 register pi "pi" "Earendil's CLI coding agent" 1 system agents install_pi check_pi \
@@ -1499,34 +1391,26 @@ curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scri
 SCRIPT
 }
 
-install_hermes() {
+install_hermes() (
   # Upstream installer shells out to `sudo apt-get install ffmpeg` as
   # $USERNAME, which would prompt. Drop a temporary NOPASSWD rule for the
   # duration of the install and remove it on the way out (success or fail).
-  local sudoers=/etc/sudoers.d/99-vps-boot-hermes
+  local sudoers="$SUDOERS_DIR/99-vps-boot-hermes"
+  [[ ! -e "$sudoers" ]] || { echo "Existing Hermes sudoers file requires inspection" >&2; return 1; }
+  trap 'rm -f -- "$sudoers"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$USERNAME" > "$sudoers"
   chmod 440 "$sudoers"
-  trap 'rm -f /etc/sudoers.d/99-vps-boot-hermes' RETURN
+  visudo -cf "$sudoers"
   sudo -u "$USERNAME" -H bash -c "$(hermes_user_script)"
   rm -f "$sudoers"
-  trap - RETURN
-}
+  trap - EXIT HUP INT TERM
+)
 
 check_hermes() {
-  local v
-  # "Hermes Agent v0.20.2 (2026.8.16)" — printed whole it reads
-  # "hermes Hermes Agent v0.20.2 …". Keep the field that starts with a digit
-  # or a "v".
-  # Same CWD trap as install_hermes: this runs from root's /root, which the
-  # user cannot read. `cd "$HOME"` first, and use a login shell so
-  # /etc/profile.d is sourced.
-  v=$(sudo -u "$USERNAME" -H bash -lc 'cd "$HOME" || exit 1; command -v hermes >/dev/null 2>&1 && hermes --version 2>/dev/null | head -1' || true)
-  v=$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^v?[0-9]+\./) { print $i; exit } }' <<< "$v")
-  if [[ -n "$v" ]]; then
-    ok "hermes $v"
-  else
-    ko "hermes not installed"
-  fi
+  report_version hermes sudo -u "$USERNAME" -H bash -lc 'cd "$HOME" || exit 1; hermes --version'
 }
 
 register hermes "Hermes" "NousResearch AI agent" 1 user agents install_hermes check_hermes \
@@ -1536,17 +1420,11 @@ register hermes "Hermes" "NousResearch AI agent" 1 user agents install_hermes ch
 
 # ─── vercel ────────────────────────────────────────────────
 install_vercel() {
-  npm install -g vercel
+  npm install --engine-strict -g vercel
 }
 
 check_vercel() {
-  if command -v vercel >/dev/null 2>&1; then
-    local v
-    v=$(vercel --version 2>/dev/null | awk '{print $NF}' || echo "?")
-    ok "vercel $v"
-  else
-    ko "vercel not installed"
-  fi
+  report_version "vercel" vercel --version
 }
 
 register vercel "Vercel CLI" "deploy and manage Vercel projects" 1 system cloud install_vercel check_vercel \
@@ -1554,25 +1432,17 @@ register vercel "Vercel CLI" "deploy and manage Vercel projects" 1 system cloud 
 
 # ─── neon ──────────────────────────────────────────────────
 install_neon() {
-  npm install -g neonctl
+  npm install --engine-strict -g neonctl
 }
 
 check_neon() {
-  # The npm package is neonctl; probe the binary it actually installs
-  # (neonctl), not the shorter "neon" name a second, unrelated CLI ships.
-  if command -v neonctl >/dev/null 2>&1; then
-    local v
-    v=$(neonctl --version 2>/dev/null | awk '{print $NF}' || echo "?")
-    ok "neonctl $v"
-  else
-    ko "neonctl not installed"
-  fi
+  report_version "neonctl" neonctl --version
 }
 
 register neon "Neon CLI" "manage Neon Postgres branches and projects" 1 system cloud install_neon check_neon
 
 # ─── hostinger ─────────────────────────────────────────────
-install_hostinger() {
+install_hostinger() (
   local ver arch asset base_url tmp_dir
   ver=$(curl -fsSL https://api.github.com/repos/hostinger/api-cli/releases/latest \
     | grep -oP '"tag_name":\s*"v\K[^"]+')
@@ -1588,7 +1458,10 @@ install_hostinger() {
   base_url="https://github.com/hostinger/api-cli/releases/download/v${ver}"
 
   tmp_dir=$(mktemp -d)
-  trap 'rm -rf "$tmp_dir"' RETURN
+  trap 'rm -rf -- "$tmp_dir"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   curl -fsSL -o "$tmp_dir/$asset" "$base_url/$asset"
   curl -fsSL -o "$tmp_dir/checksums.sha256" "$base_url/hostinger-${ver}-checksums.sha256"
@@ -1602,16 +1475,10 @@ install_hostinger() {
 
   tar -C "$tmp_dir" -xzf "$tmp_dir/$asset" hostinger
   install -m 755 "$tmp_dir/hostinger" /usr/local/bin/hostinger
-}
+)
 
 check_hostinger() {
-  if command -v hostinger >/dev/null 2>&1; then
-    local v
-    v=$(hostinger version 2>/dev/null | awk '{print $1}' || echo "?")
-    ok "hostinger $v"
-  else
-    ko "hostinger not installed"
-  fi
+  report_version "hostinger" hostinger version
 }
 
 register hostinger "Hostinger CLI" "manage your Hostinger account from the API" 1 system cloud install_hostinger check_hostinger \
@@ -1626,7 +1493,7 @@ install_caddy() {
   # endpoint serves an ASCII-armored key, and the debian.deb.txt source line
   # below references the dearmored binary keyring path by name.
   curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
-    | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   chmod go+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
     -o /etc/apt/sources.list.d/caddy-stable.list
@@ -1634,18 +1501,13 @@ install_caddy() {
   apt update -y
   wait_for_apt
   apt install -y caddy
-  # Deliberately no `ufw allow` here. `apt install caddy` starts and enables
-  # a systemd unit listening on :80, which the baseline firewall denies —
-  # that is correct behaviour for an unattended box, not a defect. Opening
-  # the port is the operator's call; check_caddy below makes the state
-  # visible so they can make it.
+  ufw allow 80/tcp comment 'Caddy HTTP'
+  ufw allow 443/tcp comment 'Caddy HTTPS'
 }
 
 check_caddy() {
   if systemctl is-active --quiet caddy; then
-    local v
-    v=$(caddy version 2>/dev/null | head -1 | awk '{print $1}' || echo "?")
-    ok "caddy $v"
+    report_version caddy caddy version
   else
     ko "caddy service not active"
   fi
@@ -1660,7 +1522,7 @@ check_caddy() {
   fi
 }
 
-register caddy "Caddy" "web server / reverse proxy; opens no firewall ports" 1 system infra install_caddy check_caddy
+register caddy "Caddy" "web server / reverse proxy; opens 80/443 TCP" 1 system infra install_caddy check_caddy
 
 # ─── herdr ─────────────────────────────────────────────────
 install_herdr() {
@@ -1671,13 +1533,7 @@ install_herdr() {
 }
 
 check_herdr() {
-  if command -v herdr >/dev/null 2>&1; then
-    local v
-    v=$(herdr --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
-    ok "herdr $v"
-  else
-    ko "herdr not installed"
-  fi
+  report_version "herdr" herdr --version
 }
 
 register herdr "herdr" "agent-aware terminal multiplexer" 1 system infra install_herdr check_herdr
@@ -1688,6 +1544,7 @@ register herdr "herdr" "agent-aware terminal multiplexer" 1 system infra install
 
 install_apt_lock_timeout() {
   local config_dir candidate=""
+  if [[ -e "$APT_LOCK_CONFIG" && ! -e "${APT_LOCK_CONFIG}.previous" ]]; then cp -p "$APT_LOCK_CONFIG" "${APT_LOCK_CONFIG}.previous" || return; fi
   config_dir=$(dirname "$APT_LOCK_CONFIG")
   if ! install -d -m 0755 "$config_dir"; then
     rm -f "$APT_LOCK_CONFIG"
@@ -1712,7 +1569,8 @@ install_apt_lock_timeout() {
 }
 
 remove_apt_lock_timeout() {
-  rm -f "$APT_LOCK_CONFIG"
+  if [[ -f "${APT_LOCK_CONFIG}.previous" ]]; then mv -f "${APT_LOCK_CONFIG}.previous" "$APT_LOCK_CONFIG"
+  else rm -f "$APT_LOCK_CONFIG"; fi
 }
 
 # wait_for_apt [budget] — blocks while another process holds the APT lists
@@ -1753,13 +1611,37 @@ wait_for_apt() {
 # again mid-install and reopen the exact race this closes. restore_apt_timers
 # is what starts it back up.
 stop_apt_timers() {
-  systemctl stop \
-    apt-daily.timer apt-daily-upgrade.timer \
-    apt-daily.service apt-daily-upgrade.service >/dev/null 2>&1 || true
+  local timer
+  install -d -m 0700 "$JOURNAL_DIR"
+  for timer in apt-daily.timer apt-daily-upgrade.timer; do
+    if [[ ! -f "$JOURNAL_DIR/$timer" ]]; then
+      local active
+      active=$(systemctl is-active "$timer" 2>/dev/null || true)
+      printf '%s\n' "$active" | atomic_state "$JOURNAL_DIR/$timer"
+    fi
+    systemctl stop "$timer" || return
+  done
+  # This also works on minimal images where fuser is not installed yet.
+  local waited=0
+  while systemctl is-active --quiet apt-daily.service || systemctl is-active --quiet apt-daily-upgrade.service; do
+    (( waited < APT_LOCK_TIMEOUT )) || { warn "APT services still running after ${APT_LOCK_TIMEOUT}s"; return 1; }
+    sleep 1
+    waited=$((waited + 1))
+  done
+  # Let an in-flight package transaction finish; never kill dpkg's service.
+  wait_for_apt
 }
 
 restore_apt_timers() {
-  systemctl start apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+  local timer failed=0
+  for timer in apt-daily.timer apt-daily-upgrade.timer; do
+    [[ -f "$JOURNAL_DIR/$timer" ]] || continue
+    if [[ $(cat "$JOURNAL_DIR/$timer") == active ]] || systemctl is-enabled --quiet "$timer"; then
+      if ! systemctl start "$timer"; then warn "Could not restore $timer"; failed=1; continue; fi
+    fi
+    rm -f "$JOURNAL_DIR/$timer"
+  done
+  return "$failed"
 }
 
 bl_update() {
@@ -1771,7 +1653,7 @@ bl_update() {
   apt install -y \
     wget gnupg lsb-release ca-certificates \
     software-properties-common ufw fail2ban git unzip curl sudo \
-    build-essential
+    build-essential psmisc
 }
 
 # bl_unattended — installs unattended-upgrades and enables automatic security
@@ -1789,6 +1671,8 @@ bl_unattended() {
   if ! cat > "$candidate" <<'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
+#clear Unattended-Upgrade::Allowed-Origins;
+#clear Unattended-Upgrade::Origins-Pattern;
 Unattended-Upgrade::Allowed-Origins {
     "${distro_id}:${distro_codename}-security";
 };
@@ -1810,23 +1694,84 @@ EOF
   # Deliberately no `--now`: starting the timer immediately would restart the
   # apt-daily-upgrade race stop_apt_timers just closed, mid-install.
   # restore_apt_timers (cmd_install) starts it once the run is done.
-  systemctl enable apt-daily-upgrade.timer >/dev/null 2>&1 || true
+  systemctl enable apt-daily-upgrade.timer
 }
 
 bl_user() {
   # non-interactive: useradd + chpasswd. password is in $USER_PASSWORD env.
-  useradd -m -s /bin/bash -c "" "$USERNAME"
+  if ! id "$USERNAME" >/dev/null 2>&1; then useradd -m -s /bin/bash -c "" "$USERNAME"; fi
+  [[ -n ${USER_PASSWORD:-} ]] || { echo "Password required to complete user setup" >&2; return 1; }
   echo "$USERNAME:$USER_PASSWORD" | chpasswd
   usermod -aG sudo "$USERNAME"
 }
 
 bl_ufw() {
-  ufw --force reset >/dev/null
   ufw default deny incoming
   ufw default allow outgoing
   ufw allow "$SSH_PORT"/tcp comment 'SSH'
   ufw --force enable
 }
+
+ssh_listener() {
+  ss -tlnpH 2>/dev/null | awk -v port="$1" '$4 ~ (":" port "$") && /"sshd"/ {found=1} END {exit !found}'
+}
+
+configure_network() (
+  set -euo pipefail
+  local backup="$JOURNAL_DIR/network-backup" previous_ports port
+  # Retain recovery material across interruption. Opening the new port before
+  # changing sshd also leaves the existing connection path available.
+  if [[ ! -d "$backup" ]]; then
+    install -d -m 0700 "$backup"
+    cp -a /etc/ufw "$backup/ufw"
+    ufw status > "$backup/ufw-status"
+    if [[ -d /etc/systemd/system/ssh.socket.d ]]; then cp -a /etc/systemd/system/ssh.socket.d "$backup/socket-dropins"; fi
+    cp -a "$SSHD_CONFIG" "$backup/sshd_config"
+    if [[ -f "$SSHD_DROPIN" ]]; then cp -a "$SSHD_DROPIN" "$backup/dropin"; fi
+    systemctl is-enabled ssh.socket > "$backup/socket" 2>/dev/null || true
+    sshd -T | awk '$1 == "port" {print $2}' > "$backup/ports"
+    touch "$backup/ready"
+  fi
+  [[ -f "$backup/ready" ]] || { echo "Incomplete network backup requires inspection" >&2; return 1; }
+  rollback_network() {
+    local rc=$?
+    if (( rc != 0 )); then
+      set +e
+      cp -a "$backup/ufw/." /etc/ufw/
+      cp -a "$backup/sshd_config" "$SSHD_CONFIG"
+      if [[ -f "$backup/dropin" ]]; then cp -a "$backup/dropin" "$SSHD_DROPIN"
+      else rm -f "$SSHD_DROPIN"; fi
+      if [[ $(cat "$backup/socket") != masked ]]; then systemctl unmask ssh.socket; fi
+      if [[ -d "$backup/socket-dropins" ]]; then
+        mkdir -p /etc/systemd/system/ssh.socket.d
+        cp -a "$backup/socket-dropins/." /etc/systemd/system/ssh.socket.d/
+      fi
+      systemctl daemon-reload
+      if sshd -t; then systemctl restart ssh.service; fi
+      if [[ $(cat "$backup/socket") == enabled ]]; then systemctl enable --now ssh.socket; fi
+      if grep -q "Status: active" "$backup/ufw-status"; then ufw --force enable
+      else ufw --force disable; fi
+      warn "Network change failed; previous configuration restored from $backup. Verify console connectivity."
+    fi
+    exit "$rc"
+  }
+  trap rollback_network EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  previous_ports=$(cat "$backup/ports")
+  for port in $previous_ports; do ufw allow "$port/tcp" comment 'SSH transition'; done
+  bl_ufw
+  # A resume must never turn password authentication back on.
+  if ! ssh_listener "$SSH_PORT" || [[ ! -f "$STATE_CONFIG" ]]; then bl_ssh_harden; fi
+  ssh_listener "$SSH_PORT"
+  for port in $previous_ports; do
+    if [[ "$port" != "$SSH_PORT" ]]; then ufw --force delete allow "$port/tcp"; fi
+  done
+  write_state_config
+  rm -rf -- "$backup"
+  trap - EXIT HUP INT TERM
+)
 
 write_sshd_dropin() {
   local permit_root=$1 password_auth=$2 kbd_auth=$3
@@ -1898,7 +1843,7 @@ sshd_root_matches_policy() {
 hardening_is_applied() {
   local password_auth root_login
   password_auth=$(sshd_effective_value passwordauthentication || true)
-  [[ "$password_auth" == "no" ]] || return 1
+  [[ "$password_auth" == "no" && $(sshd_effective_value kbdinteractiveauthentication) == no ]] || return 1
   root_login=$(sshd_effective_value permitrootlogin || true)
   if [[ "$USERNAME" == "root" ]]; then
     sshd_root_is_key_only "$root_login"
@@ -2046,7 +1991,11 @@ bl_ssh_harden() {
   if [[ "$USERNAME" == "root" ]]; then
     permit_root=yes
   fi
-  apply_sshd_policy "$permit_root" yes yes 0
+  if [[ -f "$SSHD_DROPIN" ]] && hardening_is_applied; then
+    apply_sshd_policy "$(sshd_effective_value permitrootlogin)" no no 0
+  else
+    apply_sshd_policy "$permit_root" yes yes 0
+  fi
 
   # Make ssh.service the canonical listener. Mask ssh.socket so it can't
   # auto-bind :22 on reboot or after an openssh-server upgrade.
@@ -2071,7 +2020,7 @@ bl_ssh_harden() {
   # return success without the listener coming up cleanly in edge cases.
   local i
   for ((i=0; i<5; i++)); do
-    if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${SSH_PORT}\$"; then
+    if ssh_listener "$SSH_PORT"; then
       return 0
     fi
     sleep 1
@@ -2101,6 +2050,126 @@ EOF
 # ════════════════════════════════════════════════════════════════════════════
 # State
 # ════════════════════════════════════════════════════════════════════════════
+
+supported_platform() {
+  [[ $1 == ubuntu && $2 == 26.04 && $3 == amd64 ]]
+}
+
+preflight() {
+  [[ $EUID -eq 0 ]] || die "Must run as root."
+  local ID VERSION_ID
+  . /etc/os-release
+  supported_platform "$ID" "$VERSION_ID" "$(dpkg --print-architecture)" \
+    || die "Supported platform: Ubuntu 26.04 amd64."
+  [[ -d /run/systemd/system ]] || die "systemd must be running."
+  local tool
+  for tool in flock curl ss sshd ssh-keygen apt dpkg systemctl mktemp install; do
+    command -v "$tool" >/dev/null || die "Missing prerequisite: $tool"
+  done
+}
+
+acquire_install_lock() {
+  install -d -m 0755 "$STATE_DIR"
+  exec {INSTALL_LOCK_FD}>"$STATE_DIR/lock"
+  flock -n "$INSTALL_LOCK_FD" || die "Another vps-boot operation is running."
+}
+
+atomic_state() {
+  local target=$1 candidate
+  candidate=$(mktemp "${target}.XXXXXX") || return
+  if ! cat > "$candidate" || ! chmod 0600 "$candidate" || ! mv -f "$candidate" "$target"; then
+    rm -f "$candidate"
+    return 1
+  fi
+}
+
+record_step() {
+  printf '%s\n%s\n' "$2" "${3:-}" | atomic_state "$JOURNAL_DIR/$1"
+}
+
+step_status() {
+  local value=""
+  [[ ! -f "$JOURNAL_DIR/$1" ]] || IFS= read -r value < "$JOURNAL_DIR/$1" || true
+  printf '%s' "$value"
+}
+
+initialize_journal() {
+  install -d -m 0700 "$JOURNAL_DIR"
+  printf '%s\n' "$USERNAME" "$SSH_PORT" "$CREATE_USER" "$VPS_BOOT_VERSION" | atomic_state "$JOURNAL_DIR/intent"
+  if (( ${#enabled[@]} )); then printf '%s\n' "${enabled[@]}" | atomic_state "$STATE_FILE"
+  else atomic_state "$STATE_FILE" < /dev/null; fi
+  local key
+  for key in update unattended user network fail2ban "${enabled[@]}"; do record_step "$key" pending; done
+  printf '1\n' | atomic_state "$JOURNAL_DIR/schema"
+}
+
+probe_baseline() {
+  case "$1" in
+    update) [[ -z $(dpkg --audit) ]] && dpkg-query -W -f='${Status}' build-essential | grep -q 'install ok installed' ;;
+    unattended) grep -q '^APT::Periodic::Unattended-Upgrade "1";' "$UNATTENDED_UPGRADES_CONFIG" ;;
+    user) id "$USERNAME" >/dev/null && id -nG "$USERNAME" | tr ' ' '\n' | grep -qx sudo ;;
+    network) validate_sshd_policy "$(sshd_effective_value permitrootlogin)" "$(sshd_effective_value passwordauthentication)" "$(sshd_effective_value kbdinteractiveauthentication)" && ssh_listener "$SSH_PORT" && ufw status | grep -qE "^${SSH_PORT}/tcp[[:space:]]+ALLOW" ;;
+    fail2ban) systemctl is-active --quiet fail2ban && fail2ban-client status sshd >/dev/null ;;
+  esac
+}
+
+probe_step() (
+  local key=$1
+  if [[ -n ${COMPONENT_CHECK[$key]:-} ]]; then
+    PASS=0; FAIL=0; WARN=0
+    "${COMPONENT_CHECK[$key]}"
+    (( FAIL == 0 ))
+  else probe_baseline "$key"; fi
+)
+
+journal_step() {
+  local key=$1 label=$2 result rc had_errexit=0
+  shift 2
+  if [[ $(step_status "$key") == succeeded ]] && result=$(probe_step "$key" 2>&1); then
+    record_step "$key" succeeded "$result"
+    body "$label — already verified"
+    return 0
+  fi
+  record_step "$key" running
+  [[ $- == *e* ]] && had_errexit=1
+  set +e
+  step_run "$label" "$@"
+  rc=$?
+  (( had_errexit )) && set -e
+  if (( rc != 0 )); then record_step "$key" failed; return "$rc"; fi
+  if result=$(probe_step "$key" 2>&1); then
+    record_step "$key" succeeded "$result"
+  else
+    record_step "$key" failed "$result"
+    warn "$label installed but verification failed: $result"
+    return 1
+  fi
+}
+
+cmd_resume() {
+  [[ -f "$JOURNAL_DIR/schema" && $(cat "$JOURNAL_DIR/schema") == 1 ]] \
+    || die "No resumable installation. Legacy state supports check/harden only."
+  local -a intent=() enabled=()
+  mapfile -t intent < "$JOURNAL_DIR/intent"
+  (( ${#intent[@]} == 4 )) || die "Invalid install intent."
+  USERNAME=${intent[0]}; SSH_PORT=${intent[1]}; CREATE_USER=${intent[2]}
+  valid_username "$USERNAME" && valid_install_port "$SSH_PORT" || die "Invalid recorded account or port."
+  [[ $CREATE_USER == 0 || $CREATE_USER == 1 ]] || die "Invalid user mode."
+  [[ ( $USERNAME == root && $CREATE_USER == 0 ) || ( $USERNAME != root && $CREATE_USER == 1 ) ]] || die "Invalid user mode."
+  mapfile -t enabled < "$STATE_FILE"
+  local resolved
+  resolved=$(resolve_components "${enabled[@]}") || die "Invalid component selection."
+  enabled=(); [[ -z "$resolved" ]] || mapfile -t enabled <<< "$resolved"
+  selection_allows_port "$SSH_PORT" "${enabled[@]}" || die "Recorded SSH port conflicts with selected components."
+  USER_PASSWORD=""
+  if (( CREATE_USER )) && [[ $(step_status user) != succeeded ]]; then
+    prompt_password "Password for $USERNAME" USER_PASSWORD
+  fi
+  banner
+  [[ ! -L "$LOG_FILE" ]] || die "Refusing a symlink log file."
+  ( umask 077; touch "$LOG_FILE" )
+  run_install
+}
 
 # write_state_config — record the account and port this host was set up with,
 # so `harden` needs no arguments. cmd_install calls it as soon as the port is
@@ -2239,7 +2308,7 @@ configure_user_mode() {
 
 component_is_applicable() {
   local key=$1
-  [[ "$key" != "sudo_nopasswd" || "$USERNAME" != "root" ]]
+  [[ "$key" != "sudo_nopasswd" || "${USERNAME:-root}" != "root" ]]
 }
 
 add_docker_group_if_needed() {
@@ -2253,7 +2322,19 @@ valid_username() {
 }
 
 valid_port() {
-  [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 ))
+  [[ "$1" =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 ))
+}
+
+valid_install_port() {
+  # Keep valid_port compatible with recorded legacy installations on :22.
+  [[ ! "$1" =~ ^0*22$ ]] && valid_port "$1"
+}
+
+selection_allows_port() {
+  local port=$1
+  shift
+  valid_install_port "$port" || return 1
+  [[ " $* " != *" caddy "* ]] || (( 10#$port != 80 && 10#$port != 443 ))
 }
 
 random_port() {
@@ -2271,10 +2352,13 @@ random_port() {
 cmd_install() {
   [[ $EUID -eq 0 ]] || die "Must run as root."
 
+  [[ ! -e "$STATE_CONFIG" && ! -e "$JOURNAL_DIR/intent" && ! -e "$STATE_FILE" ]] \
+    || die "An installation already exists. Use resume (or check/harden for legacy state)."
   local arg_user=${1:-}
   local arg_port=${2:-}
 
-  : > "$LOG_FILE"
+  [[ ! -L "$LOG_FILE" ]] || die "Refusing a symlink log file."
+  ( umask 077; : > "$LOG_FILE" )
   banner
 
   section "About"
@@ -2314,16 +2398,13 @@ cmd_install() {
   local port_default=${arg_port:-$(random_port)}
   while :; do
     prompt_text "SSH port" SSH_PORT "$port_default"
-    if ! valid_port "$SSH_PORT"; then
-      printf '%s│%s  %s! invalid port — must be 1-65535%s\n' \
+    if ! valid_install_port "$SSH_PORT"; then
+      printf '%s│%s  %s! choose a port from 1-65535, excluding SSH port 22%s\n' \
         "$C_DIM" "$C_RESET" "$C_YELLOW" "$C_RESET"
       port_default=$(random_port)
       continue
     fi
-    if [[ "$SSH_PORT" == "22" ]]; then
-      printf '%s│%s  %s! port 22 is the default — using it leaves you at the same exposure level%s\n' \
-        "$C_DIM" "$C_RESET" "$C_YELLOW" "$C_RESET"
-    fi
+    SSH_PORT=$((10#$SSH_PORT))
     break
   done
 
@@ -2348,6 +2429,16 @@ cmd_install() {
     read -r -a enabled <<< "$(full_install_keys)"
   fi
 
+  local resolved
+  resolved=$(resolve_components "${enabled[@]}") || die "Cannot resolve component dependencies."
+  enabled=(); [[ -z "$resolved" ]] || mapfile -t enabled <<< "$resolved"
+
+  while ! selection_allows_port "$SSH_PORT" "${enabled[@]}"; do
+    warn "Choose an SSH port other than 22; Caddy also reserves 80 and 443."
+    prompt_text "SSH port" SSH_PORT "$(random_port)"
+  done
+  SSH_PORT=$((10#$SSH_PORT))
+
   # ── confirm ──
   section "Confirm"
   if (( CREATE_USER )); then
@@ -2357,7 +2448,11 @@ cmd_install() {
     body "${C_BOLD}user${C_RESET}      root (no sudo user)"
     body "${C_BOLD}ssh${C_RESET}       :$SSH_PORT, root login on until key lockdown"
   fi
-  body "${C_BOLD}firewall${C_RESET}  UFW — only $SSH_PORT/tcp open"
+  if [[ " ${enabled[*]} " == *" caddy "* ]]; then
+    body "${C_BOLD}firewall${C_RESET}  UFW — SSH $SSH_PORT/tcp + Caddy 80/443 TCP"
+  else
+    body "${C_BOLD}firewall${C_RESET}  UFW — only $SSH_PORT/tcp open"
+  fi
   if (( ${#enabled[@]} == 0 )); then
     body "${C_BOLD}install${C_RESET}   ${C_DIM}(none — baseline only)${C_RESET}"
   else
@@ -2379,6 +2474,11 @@ cmd_install() {
     die "Aborted by user."
   fi
 
+  initialize_journal
+  run_install
+}
+
+run_install() {
   # Both cleanups are armed together, before either setup step runs, so a
   # failure partway through setup (or any step after it) still restores the
   # apt timers and drops the lock-timeout fragment — see cmd_install_cleanup.
@@ -2405,34 +2505,33 @@ cmd_install() {
 
   export DEBIAN_FRONTEND=noninteractive
 
-  step_run "System update"               bl_update
-  step_run "Automatic security updates"  bl_unattended
+  journal_step update "System update" bl_update
+  journal_step unattended "Automatic security updates" bl_unattended
   if (( CREATE_USER )); then
-    step_run "User $USERNAME"            bl_user
+    journal_step user "User $USERNAME" bl_user
+    USER_PASSWORD=""
   fi
-  step_run "Firewall (UFW)"              bl_ufw
-  step_run "SSH hardening"               bl_ssh_harden
+  journal_step network "Firewall and SSH" configure_network
   # The port is real from here on, so record it before anything else can fail or
   # be killed — `harden` reads this to re-run the lockdown without arguments.
   # A step of its own rather than a bare call: a failure here has to be visible,
   # since everything downstream of the enrollment prompt depends on it.
   step_run "Recording install state"     write_state_config
-  step_run "fail2ban"                    bl_fail2ban
+  journal_step fail2ban "fail2ban" bl_fail2ban
 
   local key
   for key in "${enabled[@]}"; do
-    step_run "${COMPONENT_NAME[$key]}"   "${COMPONENT_INSTALL[$key]}"
+    journal_step "$key" "${COMPONENT_NAME[$key]}" "${COMPONENT_INSTALL[$key]}"
   done
 
   # password no longer needed in env
   USER_PASSWORD=""
 
-  # persist enabled components so standalone `check` knows what was installed
-  mkdir -p "$STATE_DIR"
+  # Keep the resolved selection atomic (it was initially saved before setup).
   if (( ${#enabled[@]} > 0 )); then
-    printf '%s\n' "${enabled[@]}" > "$STATE_FILE"
+    printf '%s\n' "${enabled[@]}" | atomic_state "$STATE_FILE"
   else
-    : > "$STATE_FILE"
+    atomic_state "$STATE_FILE" < /dev/null
   fi
 
   # ════════════════════════════════════════════════════════════════════
@@ -2460,8 +2559,10 @@ cmd_install() {
 # on any failure between there and the end of the run phase, not only on the
 # happy path (which calls both cleanups directly, then disarms the trap).
 cmd_install_cleanup() {
-  restore_apt_timers
-  remove_apt_lock_timeout
+  local failed=0
+  restore_apt_timers || failed=1
+  remove_apt_lock_timeout || failed=1
+  return "$failed"
 }
 
 # cmd_install_handle_signal SIGNAME — HUP/INT/TERM handler paired with the
@@ -2573,6 +2674,10 @@ cmd_check() {
     for k in "${ENABLED_COMPONENTS[@]}"; do
       [[ -n "$k" ]] || continue
       component_is_applicable "$k" || continue
+      if [[ -z ${COMPONENT_CHECK[$k]:-} ]]; then
+        warn "Unknown recorded component: $k"
+        continue
+      fi
       filtered+=("$k")
     done
     ENABLED_COMPONENTS=("${filtered[@]}")
@@ -2623,7 +2728,7 @@ do_check() {
   # daemon-reload) and a one-shot check would falsely flag ✗.
   local i listening=0
   for ((i=0; i<5; i++)); do
-    if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${SSH_PORT}\$"; then
+    if ssh_listener "$SSH_PORT"; then
       listening=1
       break
     fi
@@ -2654,8 +2759,8 @@ do_check() {
   else
     ko "PermitRootLogin not 'no'"
   fi
-  if systemctl is-active --quiet ssh.socket 2>/dev/null; then
-    ko "ssh.socket should be masked but is active"
+  if [[ $(systemctl is-enabled ssh.socket 2>/dev/null || true) != masked ]]; then
+    ko "ssh.socket is not masked"
   else
     ok "ssh.socket masked/inactive"
   fi
@@ -2786,10 +2891,11 @@ do_check_footer() {
 
 cmd_help() {
   cat <<EOF
-${C_BOLD}vps-boot${C_RESET} — single-shot Ubuntu LTS hardening + dev toolchain
+${C_BOLD}vps-boot${C_RESET} — resumable Ubuntu 26.04 amd64 hardening + dev toolchain
 
 ${C_BOLD}USAGE${C_RESET}
   sudo $0 install [username] [port]
+  sudo $0 resume
   sudo $0 harden  [username]
   sudo $0 check   [username] [port]
   sudo $0 --help
@@ -2797,6 +2903,7 @@ ${C_BOLD}USAGE${C_RESET}
 ${C_BOLD}COMMANDS${C_RESET}
   install   Run the interactive wizard as root (default) or create a sudo user.
             Args (optional) pre-fill the created username and SSH port prompts.
+  resume    Resume the recorded installation; verified components are retained.
   harden    Re-run SSH key enrollment and lockdown. Idempotent, safe any time.
             The username defaults to what install recorded in $STATE_CONFIG.
   check     Re-run the verifier on an existing vps-boot install.
@@ -2821,15 +2928,33 @@ main() {
   local cmd=${1:-install}
   case "$cmd" in
     install)
-      shift
+      (( $# == 0 )) || shift
+      (( $# <= 2 )) || die "install accepts at most username and port."
+      preflight
+      acquire_install_lock
       cmd_install "$@"
+      ;;
+    resume)
+      shift
+      (( $# == 0 )) || die "resume takes no arguments."
+      preflight
+      acquire_install_lock
+      cmd_resume
+      ;;
+    --version|version)
+      (( $# == 1 )) || die "version takes no arguments."
+      printf '%s\n' "$VPS_BOOT_VERSION"
       ;;
     harden)
       shift
+      (( $# <= 1 )) || die "harden accepts at most username."
+      [[ $EUID -eq 0 ]] || die "Must run as root."
+      acquire_install_lock
       cmd_harden "$@"
       ;;
     check)
       shift
+      (( $# <= 2 )) || die "check accepts at most username and port."
       cmd_check "$@"
       ;;
     -h|--help|help)

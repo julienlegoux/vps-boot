@@ -1,6 +1,6 @@
 # vps-boot — Claude memory
 
-Single-file bash bootstrap for fresh Ubuntu LTS VPSes. `vps-boot.sh install` runs an interactive wizard; `vps-boot.sh harden` re-runs SSH key enrollment + lockdown; `vps-boot.sh check` re-runs the verifier. Distributed via `curl … | sudo bash`.
+Single-file Bash bootstrap for fresh Ubuntu 26.04 amd64 VPSes. `vps-boot.sh resume` resumes recorded work without a new wizard. `vps-boot.sh install` runs an interactive wizard; `vps-boot.sh harden` re-runs SSH key enrollment + lockdown; `vps-boot.sh check` re-runs the verifier. Distributed via `curl … | sudo bash`.
 
 ## File map
 
@@ -66,8 +66,11 @@ One thing the registry does *not* update: the toolchain table in `README.md`. Ad
 - **Reads**: every prompt redirects from `/dev/tty`. Direct `read` without that redirect breaks under `curl | sudo bash`.
 - **apt calls**: call `wait_for_apt` immediately before every `apt update`/`apt upgrade`/`apt install`, including inside a component's `install_xxx`. `DPkg::Lock::Timeout` (the `99-vps-boot-lock-timeout` fragment) only bounds dpkg's own lock wait — it does nothing for the apt lists lock that `apt update` takes first, which is what let issue #43 through when `apt-daily.timer` fired mid-install.
 - **Errors**: `die "<msg>"` only for unrecoverable preconditions (wrong UID, bad args). Inside `install_xxx` functions, let `set -euo pipefail` handle failures — `step_run` captures the exit code, prints ✗, and dumps the last 15 log lines.
-- **Idempotency**: `install_xxx` should detect "already installed" and short-circuit when reasonable. The baseline (`bl_user` in particular) is NOT idempotent — re-running install with the same username will fail at `useradd`. Re-runs of `install` are not a supported path in this round. `cmd_harden` is the deliberate exception and must stay idempotent: it is the supported recovery path, so nothing in it may assume a first run.
-- **Scope**: register with `system` for steps that run as root (most apt-based installs), `user` for steps that need to run as `$USERNAME` (nvm, bun, claude). For user-scope work inside an install fn, use:
+- **Idempotency and resume**: `install` refuses existing state. `resume` uses the versioned journal and preserves account, port and selected components. Successful steps are verified before being skipped; interrupted/failed steps are retried. Baseline changes must preserve existing SSH access, firewall rules and applied key-only lockdown. Do not store passwords in the journal.
+- **Dependencies**: add prerequisites to `COMPONENT_DEPS`; resolution is separate from display order. Python requires uv and npm components require Node. npm uses `--engine-strict`.
+- **Version checks**: use `version_value` / `report_version` so a failing executable cannot produce a green check. Preserve command-specific syntax (Hostinger uses `version`, Java `-version`).
+
+- **Scope**: register with `system` for steps that run as root (most apt-based installs), `user` for steps that need to run as `$USERNAME` (currently Hermes). For user-scope work inside an install fn, use:
   ```bash
   sudo -u "$USERNAME" -H bash <<'EOF'
   set -eo pipefail
@@ -76,10 +79,10 @@ One thing the registry does *not* update: the toolchain table in `README.md`. Ad
   EOF
   ```
   **`cd "$HOME"` is mandatory, not tidiness.** `-H` sets `HOME` but leaves the working directory where the caller was, and the caller is root sitting in `/root` — mode `700`, unreadable to `$USERNAME`. Anything the step runs that touches `.` then fails as the unprivileged user. This is invisible in root-only mode (where the user *is* root) and only shows up on a created-user install, which is why it survived eight PRs: the created-user acceptance run died on `install_hermes` with `error: failed to query metadata of symlink /root/.venv: Permission denied (os error 13)` after 22 of 23 components had installed cleanly. uv probes `.` for `uv.toml` and `.venv`; other installers probe for other things. The same applies to `check_*` functions that shell out as the user.
-- **Logging**: `step_run` redirects each step's stdout+stderr to `/tmp/vps-boot.log`. On failure it dumps the tail. Don't print to stdout from inside install fns — it'll mess up the line-rewrite.
-- **State**: two files under `/etc/vps-boot/`.
-  - `components` — the enabled component keys, one per line, written by `cmd_install`. `cmd_check` reads it on standalone runs so it only checks what was actually installed. If the file is missing (legacy install / first standalone run after a manual setup), it falls back to checking every registered component.
-  - `config` — `USERNAME=` / `SSH_PORT=`, written by `write_state_config` **immediately after the `bl_ssh_harden` step**, not at the end of the run. That placement is the point: the enrollment prompt after it waits on a human and dies on SIGHUP, and `harden` has to be able to resolve its target on the next connection. `cmd_check` and `cmd_harden` both default to it, with argv overriding.
+- **Logging**: `step_run` redirects each step's stdout+stderr to `/var/log/vps-boot.log`. On failure it dumps the tail. Don't print to stdout from inside install fns — it'll mess up the line-rewrite.
+- **State**: `config`, `components`, a flock file and a versioned `journal/` under `/etc/vps-boot/`. See `docs/planning/SPECS.md` for the journal contract.
+  - `components` — the enabled component keys, one per line, written atomically before the run, including resolved prerequisites. `cmd_check` reads it on standalone runs so it only checks what was actually installed. If the file is missing (legacy install / first standalone run after a manual setup), it falls back to checking every registered component.
+  - `config` — `USERNAME=` / `SSH_PORT=`, written by `write_state_config` **after the firewall/SSH transaction succeeds**, not at the end of the run. That placement is the point: the enrollment prompt after it waits on a human and dies on SIGHUP, and `harden` has to be able to resolve its target on the next connection. `cmd_check` and `cmd_harden` both default to it, with argv overriding.
 - **Hardening is a command, not a phase**: `cmd_harden` (`vps-boot.sh harden [username]`) runs `enroll_ssh_key` + `lockdown_ssh` standalone and idempotently; `cmd_install` reaches the same `enroll_ssh_key` inline. Two rules to preserve:
   - **`harden` takes no port argument.** It resolves the port from recorded state → the managed drop-in → `sshd -T`. A mistyped port would be written into the drop-in as `Port` and move the listener off the port the operator is connected through.
   - **Locked-down state is derived from `sshd -T` (`hardening_is_applied`), never from a marker file.** The drop-in gets hand-edited during lockout recovery, and a marker that disagrees with the running daemon is worse than no marker.
