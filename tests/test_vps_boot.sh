@@ -2333,6 +2333,31 @@ test_hermes_failure_cleans_temporary_privileges() {
   [[ ! -e "$SUDOERS_DIR/99-vps-boot-hermes" ]]
 }
 
+test_hermes_with_controlling_terminal() {
+  local expected=$1 fixture="$TEST_ROOT/hermes-pty.sh" rc=0 command
+  mkdir -p "$SUDOERS_DIR"
+  {
+    printf '#!/usr/bin/env bash\nsource %q\nUSERNAME=root\n' "$SCRIPT"
+    cat <<'FIXTURE'
+hermes_fixture() {
+  cat <<'UPSTREAM'
+set -e
+# Assert terminal isolation before exercising upstream's interactive PATH probe.
+if ( : </dev/tty ) 2>/dev/null; then exit 42; fi
+env -i HOME="$HOME" TERM=dumb bash -i -c 'command -v bash' >/dev/null 2>&1
+UPSTREAM
+  printf 'exit %s\n' "$1"
+}
+FIXTURE
+    # Bake the simulated installer result into the seam, including nonzero status.
+    printf 'hermes_user_script() { hermes_fixture %q; }\ninstall_hermes\n' "$expected"
+  } > "$fixture"
+  printf -v command 'bash %q' "$fixture"
+  timeout 15s script -q -e -c "$command" /dev/null >"$TEST_ROOT/hermes-pty.log" 2>&1 || rc=$?
+  if [[ $rc != "$expected" ]]; then cat "$TEST_ROOT/hermes-pty.log"; return 1; fi
+  [[ ! -e "$SUDOERS_DIR/99-vps-boot-hermes" ]]
+}
+
 test_platform_and_os_release_do_not_conflict() {
   . /etc/os-release
   supported_platform ubuntu 26.04 amd64 || return 1
@@ -2403,6 +2428,8 @@ run_test "intent records selection without password or premature SSH state" test
 run_test "resume uses recorded selection without a new wizard" test_resume_uses_recorded_selection_and_no_wizard
 run_test "failed version command never reports success" test_version_failure_is_not_success
 run_test "Hermes failure removes temporary sudo privileges" test_hermes_failure_cleans_temporary_privileges
+run_test "Hermes completes under a controlling terminal" test_hermes_with_controlling_terminal 0
+run_test "Hermes preserves installer failure under a controlling terminal" test_hermes_with_controlling_terminal 37
 
 run_test "sourcing vps-boot.sh does not run main" test_source_does_not_run_main
 run_test "stdin execution runs main" test_stdin_execution_runs_main

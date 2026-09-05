@@ -1404,7 +1404,10 @@ install_hermes() (
   printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$USERNAME" > "$sudoers"
   chmod 440 "$sudoers"
   visudo -cf "$sudoers"
-  sudo -u "$USERNAME" -H bash -c "$(hermes_user_script)"
+  # Upstream probes PATH with an interactive bash. With our redirected logs
+  # and an SSH controlling terminal, its job control can suspend the install.
+  # A separate session has no controlling terminal; --wait preserves failures.
+  sudo -u "$USERNAME" -H setsid --fork --wait bash -c "$(hermes_user_script)" </dev/null
   rm -f "$sudoers"
   trap - EXIT HUP INT TERM
 )
@@ -2063,7 +2066,7 @@ preflight() {
     || die "Supported platform: Ubuntu 26.04 amd64."
   [[ -d /run/systemd/system ]] || die "systemd must be running."
   local tool
-  for tool in flock curl ss sshd ssh-keygen apt dpkg systemctl mktemp install; do
+  for tool in flock setsid curl ss sshd ssh-keygen apt dpkg systemctl mktemp install; do
     command -v "$tool" >/dev/null || die "Missing prerequisite: $tool"
   done
 }
