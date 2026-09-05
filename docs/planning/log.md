@@ -2,6 +2,10 @@
 
 ## 2026-09-05
 
+* **Update**: Refreshed [release verification](release-0.1.0.md) for the
+  develop-to-main release PR: 148 passing tests, successful Woodpecker runs,
+  Hermes terminal regression and corrected Vercel login hint. Full service
+  acceptance remains pending.
 * **Update**: Corrected the [Vercel CLI decision](changes/change-1-expand-toolchain-components/02-vercel-cli.md)
   to use `vercel login`, removing the invalid flag and unsupported headless-hang claim.
 * **Update**: [Technical Specs](SPECS.md) and [Conventions](CONVENTIONS.md)

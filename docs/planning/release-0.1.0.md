@@ -22,11 +22,10 @@ for lock inspection. No credentials were provisioned for any agent or cloud CLI.
 
 ## Branch comparison
 
-Remote heads were verified on 2026-09-05: main `86cf109`, develop `be2f0ba`.
-The feature branch starts from develop and retains its rerunnable `harden`
-command and timer-restoration-before-verification fix. The local main checkout
-was stale and was not used as the release baseline. The commits unique to the
-remote main history were merge commits, not additional missing features.
+Remote heads were verified on 2026-09-05 before release PR preparation:
+main `86cf109`, develop `f87762b`. The release targets main from develop and
+includes the expanded component catalogue, grouped Full/Custom picker,
+rerunnable `harden`, APT timer fixes and resumable Ubuntu 26.04 provisioning.
 
 ## Observed installations
 
@@ -65,7 +64,7 @@ exposure, service startup or restart behavior.
 
 ## Executed checks
 
-- **146 tests passed, 0 failed** inside Ubuntu 26.04. The suite runs as root with real OpenSSH
+- **148 tests passed, 0 failed** inside Ubuntu 26.04. The suite runs as root with real OpenSSH
   configuration validation and stubbed mutations for unit scenarios.
 - ShellCheck errors and Bash syntax are checked for the script and test files.
 - Woodpecker CLI lint accepts `.woodpecker/test.yaml`; the remote repository
@@ -74,6 +73,14 @@ exposure, service startup or restart behavior.
   compiles/runs Rust, Go and Java, builds a Cargo project and runs Node plus
   agent/cloud version commands (`tests/smoke_user.sh`).
 - Hermes was installed as root and as a created user without an interactive setup prompt; the temporary sudoers rule was removed.
+- A subsequent VPS run exposed suspended Hermes processes during upstream's
+  interactive PATH probe. Commit `b5200a6` isolates the installer from the SSH
+  controlling terminal; two pseudo-terminal regressions cover completion,
+  error propagation and temporary sudoers cleanup. Completion on the affected
+  VPS has not yet been reported.
+- Commit `f87762b` corrects the Vercel sign-in hint to `vercel login`.
+- Woodpecker pipelines #1, #2 and #3 succeeded on develop; #3 validates
+  `f87762b`, the code revision used to prepare the release PR.
 
 Live installation exposed and corrected three defects beyond static checks:
 uv's externally managed interpreter needs a separate pip environment; an
@@ -97,7 +104,6 @@ Do not tag or merge this release into main before the service acceptance gate
 is completed or the user explicitly changes that gate. Docker tests cannot
 establish VPS boot, cloud-init or provider-firewall compatibility even when green.
 
-Remote CI has not run: automatic approval review rejected publication of the
-feature branch to the public GitHub repository. Woodpecker configuration lint
-and the equivalent local Linux checks passed. No remote branch, tag or release
-was published.
+The user subsequently authorized publication to develop, and remote CI passed
+as recorded above. The release PR is prepared as a draft while service
+acceptance remains pending. No release tag has been published.
