@@ -1329,6 +1329,76 @@ test_sudo_nopasswd_cleans_candidate_after_chmod_failure() {
   ! compgen -G "$VPS_BOOT_SUDOERS_DIR/.vps-boot-sudo.*" >/dev/null
 }
 
+network_backup_fixture() {
+  network_runtime="$TEST_ROOT/network-runtime"
+  network_trace="$TEST_ROOT/network-trace"
+  rm -rf "$JOURNAL_DIR/network-backup" "$network_runtime"
+  : > "$network_trace"
+  SSH_PORT=2222
+  mkdir -p "$JOURNAL_DIR"
+  install() {
+    if [[ ${*: -1} == /run/sshd ]]; then
+      mkdir -p "$network_runtime"
+    else command install "$@"; fi
+  }
+  cp() {
+    case "$2" in
+      /etc/ufw|/etc/systemd/system/ssh.socket.d) mkdir -p "${@: -1}" ;;
+      *) command cp "$@" ;;
+    esac
+  }
+  systemctl() { printf 'disabled\n'; }
+  ufw() { printf '%s\n' "$*" >> "$network_trace"; }
+  sshd() {
+    [[ -d "$network_runtime" ]] || return 255
+    [[ ${FAIL_NETWORK_PROBE:-0} == 0 ]] || return 255
+    printf 'port 22\n'
+  }
+  ssh_listener() { return 0; }
+  bl_ssh_harden() { :; }
+  write_state_config() { :; }
+}
+
+test_network_prepares_runtime_before_backup() {
+  network_backup_fixture
+  configure_network
+  local rc=$?
+  (( rc == 0 )) || return 1
+  [[ -d "$network_runtime" ]] || return 1
+  grep -qx 'allow 22/tcp comment SSH transition' "$network_trace" || return 1
+  [[ ! -d "$JOURNAL_DIR/network-backup" ]]
+}
+
+test_network_resumes_incomplete_backup() {
+  network_backup_fixture
+  mkdir -p "$network_runtime"
+  FAIL_NETWORK_PROBE=1
+  configure_network >/dev/null 2>&1
+  local rc=$?
+  (( rc == 255 )) || return 1
+  [[ -d "$JOURNAL_DIR/network-backup" && ! -f "$JOURNAL_DIR/network-backup/ready" ]] || return 1
+  ! grep -q '^allow ' "$network_trace" || return 1
+  FAIL_NETWORK_PROBE=0
+  configure_network
+  rc=$?
+  (( rc == 0 )) || return 1
+  local -a preserved=("$JOURNAL_DIR"/network-incomplete.*/network-backup/sshd_config)
+  [[ -f ${preserved[0]} ]] || return 1
+  [[ ! -d "$JOURNAL_DIR/network-backup" ]]
+}
+
+test_network_retains_ready_backup() {
+  network_backup_fixture
+  mkdir -p "$JOURNAL_DIR/network-backup"
+  touch "$JOURNAL_DIR/network-backup/ready"
+  printf '2200\n' > "$JOURNAL_DIR/network-backup/ports"
+  FAIL_NETWORK_PROBE=1
+  configure_network
+  local rc=$?
+  (( rc == 0 )) || return 1
+  grep -qx 'allow 2200/tcp comment SSH transition' "$network_trace"
+}
+
 test_sshd_dropin_has_single_managed_values() {
   SSH_PORT=2222
   write_sshd_dropin no yes yes || return 1
@@ -2421,6 +2491,9 @@ test_caddy_and_ssh_do_not_compete_for_web_ports() {
 }
 
 run_test "Caddy and SSH cannot share web ports" test_caddy_and_ssh_do_not_compete_for_web_ports
+run_test "network prepares runtime before backup" test_network_prepares_runtime_before_backup
+run_test "network resumes incomplete backup" test_network_resumes_incomplete_backup
+run_test "network retains ready backup" test_network_retains_ready_backup
 run_test "install lock excludes another process" test_install_lock_excludes_another_process
 run_test "resume repairs a failed verification of a previously successful step" test_journal_repairs_a_previously_successful_broken_step
 run_test "legacy state cannot be resumed" test_legacy_state_is_not_resumable

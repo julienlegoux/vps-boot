@@ -1733,7 +1733,16 @@ ssh_listener() {
 
 configure_network() (
   set -euo pipefail
-  local backup="$JOURNAL_DIR/network-backup" previous_ports port
+  local backup="$JOURNAL_DIR/network-backup" previous_ports port incomplete
+  # Prepare the runtime directory before the first sshd -T. It may be absent
+  # even while a socket-activated SSH server is accepting connections.
+  install -d -m 0755 /run/sshd
+  # Network changes start only after ready is written. Preserve an interrupted
+  # snapshot for inspection, then retry from the unchanged live configuration.
+  if [[ -d "$backup" && ! -f "$backup/ready" ]]; then
+    incomplete=$(mktemp -d "$JOURNAL_DIR/network-incomplete.XXXXXX")
+    mv -- "$backup" "$incomplete/network-backup"
+  fi
   # Retain recovery material across interruption. Opening the new port before
   # changing sshd also leaves the existing connection path available.
   if [[ ! -d "$backup" ]]; then
