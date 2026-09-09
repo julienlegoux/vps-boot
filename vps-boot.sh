@@ -729,7 +729,7 @@ declare -A COMPONENT_INSTALL=()
 declare -A COMPONENT_CHECK=()
 declare -A COMPONENT_SIGNIN=()  # optional: short hint shown in do_check footer
 declare -A COMPONENT_DEPS=([python]=uv [bun]=node [pnpm]=node [claude]=node
-  [opencode]=node [codex]=node [gemini]=node [pi]=node [vercel]=node [neon]=node)
+  [opencode]=node [codex]=node [gemini]=node [pi]=node [vercel]=node [netlify]=node [neon]=node)
 
 # Topological order, with registry order used to break ties. The selected set
 # and dependency state are local to each resolution (including recursive calls).
@@ -1432,6 +1432,18 @@ check_vercel() {
 
 register vercel "Vercel CLI" "deploy and manage Vercel projects" 1 system cloud install_vercel check_vercel \
   "vercel login"
+
+# ─── netlify ───────────────────────────────────────────────
+install_netlify() {
+  npm install --engine-strict -g netlify-cli
+}
+
+check_netlify() {
+  report_version "netlify" netlify --version
+}
+
+register netlify "Netlify CLI" "deploy and manage Netlify projects" 1 system cloud install_netlify check_netlify \
+  "netlify login"
 
 # ─── neon ──────────────────────────────────────────────────
 install_neon() {

@@ -2216,13 +2216,14 @@ test_readme_lists_every_component_in_registry_order() {
 }
 
 test_cloud_cli_components_registered() {
-  # vercel and neon install via npm, so they must land after node in registry
+  # npm-based cloud CLIs must land after node in registry
   # order (and thus in run order too).
-  local key node_idx=-1 vercel_idx=-1 neon_idx=-1 hostinger_idx=-1 i=0
+  local key node_idx=-1 vercel_idx=-1 netlify_idx=-1 neon_idx=-1 hostinger_idx=-1 i=0
   for key in "${COMPONENTS[@]}"; do
     case "$key" in
       node) node_idx=$i ;;
       vercel) vercel_idx=$i ;;
+      netlify) netlify_idx=$i ;;
       neon) neon_idx=$i ;;
       hostinger) hostinger_idx=$i ;;
     esac
@@ -2230,9 +2231,13 @@ test_cloud_cli_components_registered() {
   done
   (( node_idx >= 0 && vercel_idx >= 0 && neon_idx >= 0 && hostinger_idx >= 0 )) || return 1
   (( vercel_idx > node_idx )) || return 1
+  (( netlify_idx > node_idx )) || return 1
   (( neon_idx > node_idx )) || return 1
 
   [[ "${COMPONENT_GROUP[vercel]:-}" == "cloud" ]] || return 1
+  [[ "${COMPONENT_GROUP[netlify]:-}" == "cloud" ]] || return 1
+  [[ "${COMPONENT_DEFAULT[netlify]:-}" == 1 ]] || return 1
+  [[ "${COMPONENT_SIGNIN[netlify]:-}" == 'netlify login' ]] || return 1
   [[ "${COMPONENT_GROUP[neon]:-}" == "cloud" ]] || return 1
   [[ "${COMPONENT_GROUP[hostinger]:-}" == "cloud" ]] || return 1
 
@@ -2254,6 +2259,7 @@ test_cloud_cli_components_registered() {
 }
 
 test_dependency_resolution_adds_prerequisites() {
+  [[ $(resolve_components netlify vercel) == $'node\nnetlify\nvercel' ]] || return 1
   [[ $(resolve_components codex python pnpm) == $'node\ncodex\nuv\npython\npnpm' ]] || return 1
   [[ -z $(resolve_components) ]] || return 1
   ! resolve_components nonexistent >/dev/null 2>&1 || return 1
