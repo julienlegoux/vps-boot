@@ -179,12 +179,11 @@ tail -n 60 /var/log/vps-boot.log
 
 ## Development
 
-Woodpecker runs Bash syntax checks, ShellCheck error checks and the regression suite on Ubuntu 26.04.
+[GitHub Actions](https://github.com/julienlegoux/vps-boot/actions/workflows/test.yml) runs Bash syntax checks, ShellCheck error checks and the regression suite in Ubuntu 26.04 on pushes (including tags), pull requests and manual runs.
 
 ```bash
 docker build -t vps-boot-test:26.04 -f tests/Dockerfile .
 docker run --rm -v "$PWD:/workspace:ro" vps-boot-test:26.04
-woodpecker-cli lint .woodpecker/test.yaml
 ```
 
 [Adding a component](.claude/CLAUDE.md) · [Technical specs](docs/planning/SPECS.md) · [Release verification](docs/planning/release-0.1.0.md)

@@ -1,5 +1,11 @@
 # Log
 
+## 2026-09-14
+
+* **Update**: Migrated CI from Woodpecker to GitHub Actions, retaining the
+  Ubuntu 26.04 container, Bash syntax checks, ShellCheck and regression suite.
+  Updated [Technical Specs](SPECS.md) and [Conventions](CONVENTIONS.md).
+
 ## 2026-09-05
 
 * **Update**: Refreshed [release verification](release-0.1.0.md) for the

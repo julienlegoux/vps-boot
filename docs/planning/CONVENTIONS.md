@@ -3,7 +3,7 @@ type: Conventions
 title: "vps-boot — Conventions"
 description: "How this repo actually writes Bash: registry-driven components, UI helpers instead of echo, transactional writes, and Conventional Commits."
 tags: [planning, conventions]
-timestamp: 2026-08-16T07:28:00Z
+timestamp: 2026-09-14T11:00:00Z
 status: final
 mapped_commit: 2e2cb762a6c0e97fb8613ed4b4a331695b2fcd1d
 mapped_at: 2026-08-16T07:28:00Z
@@ -117,7 +117,7 @@ Conventions the harness assumes:
 - Behaviour promised in `README.md` is asserted against the README text
   (`test_readme_documents_new_defaults`), so user-facing changes update both.
 
-Woodpecker runs `.woodpecker/test.yaml` on Ubuntu 26.04. Run `bash tests/test_vps_boot.sh` as root in the disposable Linux test container before pushing; the harness exits non-zero when any case fails. Real network/service acceptance is a separate privileged-container scenario.
+GitHub Actions runs `.github/workflows/test.yml` in an Ubuntu 26.04 container. Run `bash tests/test_vps_boot.sh` as root in the disposable Linux test container before pushing; the harness exits non-zero when any case fails. Verify the PR run and the post-merge push run on GitHub. Real network/service acceptance is a separate privileged-container scenario.
 
 ## Error handling
 

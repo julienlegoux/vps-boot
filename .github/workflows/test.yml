@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu-26-tests:
+    name: Ubuntu 26.04 tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: ubuntu:26.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      LANG: C.UTF-8
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends bash ca-certificates git openssh-server sudo shellcheck procps psmisc util-linux
+          mkdir -p /run/sshd
+
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Check Bash syntax
+        run: |
+          bash -n vps-boot.sh
+          bash -n tests/test_vps_boot.sh
+
+      - name: Run ShellCheck
+        run: shellcheck --severity=error vps-boot.sh tests/*.sh
+
+      - name: Run regression tests
+        run: bash tests/test_vps_boot.sh
