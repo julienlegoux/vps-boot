@@ -2439,7 +2439,7 @@ test_platform_and_os_release_do_not_conflict() {
   supported_platform ubuntu 26.04 amd64 || return 1
   ! supported_platform ubuntu 24.04 amd64 || return 1
   ! supported_platform ubuntu 26.04 arm64 || return 1
-  [[ $(main --version) == 0.1.0 ]]
+  [[ $(main --version) == 0.2.0 ]]
 }
 
 test_java_excludes_early_access_candidates() {

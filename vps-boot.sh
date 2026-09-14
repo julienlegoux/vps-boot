@@ -15,7 +15,7 @@ set -euo pipefail
 # ════════════════════════════════════════════════════════════════════════════
 
 readonly PORT_MIN=10000
-readonly VPS_BOOT_VERSION=0.1.0
+readonly VPS_BOOT_VERSION=0.2.0
 readonly PORT_MAX=65535
 readonly LOG_FILE="${VPS_BOOT_LOG_FILE:-/var/log/vps-boot.log}"
 readonly APT_LOCK_TIMEOUT=180
