@@ -48,7 +48,7 @@ APT waits up to **three minutes** for package locks. If a step fails, installati
 
 ## Tools
 
-**Full install** selects the whole catalogue: **22 components as root**, or **23 with a created user**. **Custom** lets you pick individual tools; prerequisites are added automatically.
+**Full install** selects the whole catalogue: **23 components as root**, or **24 with a created user**. **Custom** lets you pick individual tools; prerequisites are added automatically.
 
 | Group | Includes |
 |---|---|
@@ -56,13 +56,13 @@ APT waits up to **three minutes** for package locks. If a step fails, installati
 | Languages | Node, Python, Go, Java, Rust |
 | Packaging | Bun, pnpm, uv |
 | AI agents | Claude Code, opencode, Codex, Gemini CLI, pi, Hermes |
-| Cloud | Vercel, Neon, Hostinger |
+| Cloud | Vercel, Netlify, Neon, Hostinger |
 | Infrastructure | Caddy, herdr |
 
 <details>
 <summary><strong>Explore the full catalogue</strong></summary>
 
-### Toolchain — 23 components
+### Toolchain — 24 components
 
 | Group | Tool | Purpose |
 |---|---|---|
@@ -85,6 +85,7 @@ APT waits up to **three minutes** for package locks. If a step fails, installati
 | agents | pi | Terminal coding agent |
 | agents | Hermes | NousResearch AI agent |
 | cloud | Vercel CLI | `vercel` |
+| cloud | Netlify CLI | `netlify` — sign in with `netlify login` |
 | cloud | Neon CLI | `neonctl` |
 | cloud | Hostinger CLI | `hostinger` |
 | infra | Caddy | Web server and reverse proxy |
