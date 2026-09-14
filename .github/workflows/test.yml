@@ -46,3 +46,43 @@ jobs:
 
       - name: Run regression tests
         run: bash tests/test_vps_boot.sh
+
+  node-current-smoke:
+    name: Node Current upgrade on Ubuntu 26.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: ubuntu:26.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install smoke test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl gnupg psmisc
+
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install existing Node LTS
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y nodejs
+          node -p 'process.version'
+          node -e 'require("node:assert/strict").ok(process.release.lts)'
+
+      - name: Upgrade to Node Current and verify repeat installation
+        run: |
+          source ./vps-boot.sh
+          install_node
+          node -e 'require("node:assert/strict").ok(!process.release.lts)'
+          node --version
+          npm --version
+          install_node
+          FAIL=0
+          check_node
+          test "$FAIL" -eq 0
