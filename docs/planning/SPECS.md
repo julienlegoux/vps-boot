@@ -3,7 +3,7 @@ type: Technical Specification
 title: "vps-boot — Technical Specs"
 description: "Resumable Ubuntu 26.04 amd64 provisioning for autonomous agent VPSes."
 tags: [planning, specs]
-timestamp: 2026-09-05T15:00:00Z
+timestamp: 2026-09-14T11:00:00Z
 status: final
 ---
 
@@ -134,9 +134,12 @@ or manage Docker's own filtering rules.
 
 ## Tests and CI
 
-Woodpecker's `.woodpecker/test.yaml` runs on push, PR, manual and tag events in
-Ubuntu 26.04. It executes Bash syntax, ShellCheck and the test harness as root
-with an actual OpenSSH validator. `.gitattributes` enforces LF for shell/YAML.
+GitHub Actions runs `.github/workflows/test.yml` on pushes (including tags),
+pull requests and manual dispatch. An Ubuntu 24.04 hosted runner starts an
+Ubuntu 26.04 job container, which executes Bash syntax, ShellCheck error checks
+and the test harness as root with an actual OpenSSH validator. The workflow
+uses a read-only repository token, disables persisted checkout credentials
+and limits each job to 15 minutes. `.gitattributes` enforces LF for shell/YAML.
 
 `tests/Dockerfile` supplies the same Linux prerequisites locally.
 `tests/smoke_user.sh` compiles and runs minimal projects as an unprivileged
