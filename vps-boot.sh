@@ -1087,7 +1087,7 @@ register gh "GitHub CLI" "gh" 1 system core install_gh check_gh \
 
 # ─── node ──────────────────────────────────────────────────
 install_node() {
-  curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+  curl -fsSL https://deb.nodesource.com/setup_current.x | bash -
   wait_for_apt
   apt install -y nodejs
 }
@@ -1097,7 +1097,7 @@ check_node() {
   report_version "npm" npm --version
 }
 
-register node "Node LTS" "current LTS via NodeSource" 1 system languages install_node check_node
+register node "Node Current" "latest Current via NodeSource" 1 system languages install_node check_node
 
 # ─── python ────────────────────────────────────────────────
 install_python() {

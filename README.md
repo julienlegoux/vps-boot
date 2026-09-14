@@ -41,7 +41,7 @@ The wizard guides you through four choices:
 |---|---|---|
 | System updates and build tools | Choose the tools you need | Resume interrupted installations |
 | UFW firewall and fail2ban | Dependencies installed automatically | Verify installed components |
-| SSH key enrollment and lockdown | Stable Python, Node LTS and more | Finish SSH hardening later |
+| SSH key enrollment and lockdown | Stable Python, Node Current and more | Finish SSH hardening later |
 | Automatic security updates, no automatic reboot | Agent and cloud CLIs ready for sign-in | Keep the same account, port and selection |
 
 APT waits up to **three minutes** for package locks. If a step fails, installation stops, prints the log tail and records progress for `resume`.
@@ -70,7 +70,7 @@ APT waits up to **three minutes** for package locks. If a step fails, installati
 | core | CLI tools | `jq`, `ripgrep`, `fd`, `htop`, `tree` |
 | core | Docker + Compose | Docker CE, buildx and Compose |
 | core | GitHub CLI | GitHub from the terminal |
-| languages | Node LTS | Current Node LTS via NodeSource |
+| languages | Node Current | Latest Node.js Current via NodeSource |
 | languages | Python + pip | Stable Python via uv, with a dedicated pip environment |
 | languages | Go | Latest Go toolchain |
 | languages | Java (JDK) | Newest installable stable LTS OpenJDK |
